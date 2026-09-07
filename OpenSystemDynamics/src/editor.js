@@ -2516,10 +2516,16 @@ class HtmlOverlayTwoPointer extends TwoPointer {
 		this.targetElement.style.backgroundColor = "white";
 		this.targetElement.style.zIndex = 100;
 		this.targetElement.style.overflow = "hidden";
-		this.targetElement.style.left = (this.getMinX() + this.targetBorder + 1) + "px";
-		this.targetElement.style.top = (this.getMinY() + this.targetBorder + 1) + "px";
+		// The element is laid out (and its contents, e.g. a jqplot chart,
+		// rendered) at canvas-unit size; a transform stretches the whole
+		// thing to match the zoomed svg instead of relying on its content
+		// to re-render at a new pixel size on every zoom step.
+		this.targetElement.style.transformOrigin = "0 0";
+		this.targetElement.style.left = (this.getMinX() * Zoom.level + this.targetBorder + 1) + "px";
+		this.targetElement.style.top = (this.getMinY() * Zoom.level + this.targetBorder + 1) + "px";
 		this.targetElement.style.width = "2px";
 		this.targetElement.style.height = "2px";
+		this.targetElement.style.transform = `scale(${Zoom.level})`;
 		document.getElementById("svgplanebackground").appendChild(this.targetElement);
 
 		$(this.targetElement).mousedown((event) => {
@@ -2560,11 +2566,14 @@ class HtmlOverlayTwoPointer extends TwoPointer {
 		this.coordRect.y2 = this.endY;
 		this.coordRect.update();
 
-		this.targetElement.style.left = (this.getMinX() + this.targetBorder + 1) + "px";
-		this.targetElement.style.top = (this.getMinY() + this.targetBorder + 1) + "px";
+		this.targetElement.style.left = (this.getMinX() * Zoom.level + this.targetBorder + 1) + "px";
+		this.targetElement.style.top = (this.getMinY() * Zoom.level + this.targetBorder + 1) + "px";
 
+		// Unscaled (canvas-unit) size; the zoom transform below stretches it
+		// to the actual screen size, matching the svg frame.
 		this.targetElement.style.width = (this.getWidth() - (2 * this.targetBorder)) + "px";
 		this.targetElement.style.height = (this.getHeight() - (2 * this.targetBorder)) + "px";
+		this.targetElement.style.transform = `scale(${Zoom.level})`;
 	}
 
 	clean() {
@@ -5660,6 +5669,16 @@ class Zoom {
 
 		view.scrollLeft = centreX * level - view.clientWidth / 2;
 		view.scrollTop = centreY * level - view.clientHeight / 2;
+
+		// Plots are HTML overlays positioned in screen pixels rather than svg
+		// user units, so unlike the rest of the canvas they don't rescale for
+		// free when the svg's width/height change; reposition them by hand.
+		let all_objects = get_all_objects();
+		for (let key in all_objects) {
+			if (all_objects[key] instanceof HtmlOverlayTwoPointer) {
+				all_objects[key].updateGraphics();
+			}
+		}
 	}
 
 	static apply() {
