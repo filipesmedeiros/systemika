@@ -8,14 +8,19 @@ terms of the Affero General Public License (http://www.gnu.org/licenses/agpl-3.0
 const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require("electron");
 const fs = require("fs/promises");
 const path = require("path");
+const systemikaRunStore = require("./systemika-run-package");
+
+// Keep the npm package identifier lowercase (systemika), but expose the
+// correctly capitalized product name to Electron and desktop environments.
+app.setName("Systemika Studio");
 
 // Paths are relative to this file so the same code works both run from the
 // repo root in development ("electron .") and from the copy gulp assembles
 // under distribute/output — both keep electron/ as a sibling of start.html
-// and icons/.
+// and app-icons/.
 const appRoot = path.join(__dirname, "..");
 const entryPoint = path.join(appRoot, "start.html");
-const iconPath = path.join(appRoot, "icons", "stochsd.png");
+const iconPath = path.join(appRoot, "app-icons", "systemika.png");
 const fileExtension = ".ssd";
 
 let mainWindow;
@@ -108,6 +113,7 @@ function createWindow() {
 
 	mainWindow.maximize();
 	mainWindow.setMenuBarVisibility(false);
+	mainWindow.setTitle(`Systemika ${app.getVersion()}`);
 	mainWindow.loadFile(entryPoint);
 
 	mainWindow.webContents.on("did-finish-load", () => {
@@ -143,17 +149,21 @@ function createWindow() {
 
 	mainWindow.confirmClose = () => {
 		readyToClose = true;
-		mainWindow.close();
+		// Renderer consent has already been obtained. destroy() bypasses the
+		// intercepted close event entirely, so "No" (discard changes) cannot
+		// fall back into another close round-trip or get stranded on Linux.
+		if (!mainWindow.isDestroyed()) mainWindow.destroy();
 	};
 }
 
 // Registered once at module scope (not inside createWindow) so a second
 // window — e.g. after all windows closed and the dock icon reopened one on
 // macOS — doesn't add a duplicate listener.
-ipcMain.on("window:confirm-close", () => {
-	if (mainWindow) {
+ipcMain.handle("window:confirm-close", async () => {
+	if (mainWindow && !mainWindow.isDestroyed()) {
 		mainWindow.confirmClose();
 	}
+	return true;
 });
 
 ipcMain.handle("dialog:save", async (event, defaultPath, extension) => {
@@ -161,7 +171,7 @@ ipcMain.handle("dialog:save", async (event, defaultPath, extension) => {
 	let result = await dialog.showSaveDialog(mainWindow, {
 		defaultPath,
 		filters: [
-			{ name: ext === "ssd" ? "StochSD Models" : ext.toUpperCase() + " Files", extensions: [ext] },
+			{ name: ext === "ssd" ? "Systemika Models" : ext.toUpperCase() + " Files", extensions: [ext] },
 			{ name: "All Files", extensions: ["*"] },
 		],
 	});
@@ -172,7 +182,7 @@ ipcMain.handle("dialog:open", async (event, extension) => {
 	let result = await dialog.showOpenDialog(mainWindow, {
 		properties: ["openFile"],
 		filters: [
-			{ name: "StochSD Models", extensions: [(extension || fileExtension).replace(/^\./, "")] },
+			{ name: "Systemika Models", extensions: [(extension || fileExtension).replace(/^\./, "")] },
 			{ name: "All Files", extensions: ["*"] },
 		],
 	});
@@ -189,4 +199,84 @@ ipcMain.handle("file:write", async (event, filePath, contents) => {
 
 ipcMain.handle("shell:open-external", async (event, url) => {
 	await shell.openExternal(url);
+});
+
+
+// Persistent Systemika simulation runs. The renderer supplies the currently
+// saved model path for each request, so run files are always stored beside the
+// model that produced them and the main process does not maintain a second,
+// potentially stale copy of model-file state.
+ipcMain.handle("systemika:runs:exists", async (event, modelPath, runLabel) => {
+	await systemikaRunStore.ensureRunsDirectory(modelPath);
+	return systemikaRunStore.runExists(modelPath, runLabel);
+});
+
+ipcMain.handle("systemika:runs:save", async (event, modelPath, payload) => {
+	const resolvedModelPath = systemikaRunStore.assertSavedModelPath(modelPath);
+	const metadata = {
+		...(payload.metadata || {}),
+		software: {
+			application: "Systemika",
+			version: app.getVersion(),
+			...((payload.metadata && payload.metadata.software) || {}),
+		},
+		model: {
+			...((payload.metadata && payload.metadata.model) || {}),
+			file: path.basename(resolvedModelPath),
+		},
+	};
+	return systemikaRunStore.writeRunPackage({
+		modelPath: resolvedModelPath,
+		runLabel: payload.runLabel,
+		csv: payload.csv,
+		metadata,
+		overwrite: Boolean(payload.overwrite),
+	});
+});
+
+ipcMain.handle("systemika:runs:load", async (event, modelPath, runLabel) => {
+	return systemikaRunStore.readRunPackage({ modelPath, runLabel });
+});
+
+ipcMain.handle("systemika:runs:list", async (event, modelPath) => {
+	return systemikaRunStore.listRuns(modelPath);
+});
+
+ipcMain.handle("systemika:runs:rename", async (event, modelPath, sourceLabel, targetLabel) => {
+	return systemikaRunStore.renameRun(modelPath, sourceLabel, targetLabel);
+});
+
+ipcMain.handle("systemika:runs:duplicate", async (event, modelPath, sourceLabel, targetLabel) => {
+	return systemikaRunStore.duplicateRun(modelPath, sourceLabel, targetLabel);
+});
+
+ipcMain.handle("systemika:runs:delete", async (event, modelPath, runLabel) => {
+	return systemikaRunStore.deleteRun(modelPath, runLabel);
+});
+
+ipcMain.handle("systemika:runs:open-folder", async (event, modelPath) => {
+	const dir = await systemikaRunStore.ensureRunsDirectory(modelPath);
+	const errorText = await shell.openPath(dir);
+	if (errorText) throw new Error(errorText);
+	return dir;
+});
+
+// Use an Electron-owned asynchronous message box rather than window.confirm()
+// inside the nested model-editor frame. Native JS confirm dialogs in a nested
+// frame can become visually present but unable to receive pointer input on
+// some Electron/platform combinations.
+ipcMain.handle("systemika:runs:confirm-overwrite", async (event, runLabel) => {
+	const label = String(runLabel || "Base");
+	const owner = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+	const result = await dialog.showMessageBox(owner, {
+		type: "question",
+		title: "Overwrite simulation run?",
+		message: `A simulation run named "${label}" already exists.`,
+		detail: "Do you want to overwrite the existing run file?",
+		buttons: ["Overwrite", "Cancel"],
+		defaultId: 1,
+		cancelId: 1,
+		noLink: true,
+	});
+	return result.response === 0;
 });

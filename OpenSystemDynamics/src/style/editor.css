@@ -64,13 +64,31 @@ text.name_element {
     cursor: grabbing;
 }
 
+/* Keep selected SVG model entities and their handles above HTML plot overlays.
+   The elevation is enabled only while something is selected, so normal plot
+   interaction remains unchanged. Plot borders become transparent while raised
+   so the HTML chart itself stays visible underneath. */
+#svgplane.selection-on-top {
+    position: relative;
+    z-index: 101;
+    background-color: transparent !important;
+    pointer-events: none;
+}
+#svgplane.selection-on-top .layer {
+    pointer-events: all;
+}
+#svgplane.selection-on-top g.layer.plot .element {
+    fill: none !important;
+    pointer-events: stroke;
+}
+
 .tooltip {
     width: 400px;
 }
 
 @media print
 {    
-    #topPanel
+    #topPanel, .run-tool-panel, .model-tool-panel, .info-bar
     {
         display: none !important;
     }
@@ -136,6 +154,149 @@ text.name_element {
     background-color: var(--table-border-color);
     background-color: var(--color-border);
 }
+
+
+/* Split workspace: creation/diagram tools stay in a slim single-column strip.
+   Selection/editing, simulation controls, and output displays stay in the top toolbar. */
+.workspace-row {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+}
+.model-tool-panel {
+    --button-size: 2rem;
+    position: relative;
+    z-index: 20;
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 0.35rem 0.4rem;
+    border-right: 1px solid var(--color-border);
+    background: var(--color-background-light);
+    overflow: visible;
+}
+.model-tool-panel > .tool-grouping {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    padding-bottom: 0.4rem;
+}
+.model-tool-panel > .tool-grouping:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    left: 0.2rem;
+    right: 0.2rem;
+    bottom: 0;
+    height: 1px;
+    background: var(--color-border);
+}
+.model-tool-panel [data-title]:hover::after {
+    top: 50%;
+    left: calc(100% + 0.35rem);
+    transform: translateY(-50%);
+    z-index: 1000;
+}
+.model-tool-panel button.tool-button {
+    border: 1px solid var(--color-border);
+    background-color: var(--color-highlight-neutral);
+    padding: 2px;
+    margin: 0;
+    box-sizing: border-box;
+    width: var(--button-size);
+    height: var(--button-size);
+    border-radius: 0.25rem;
+    cursor: pointer;
+}
+.model-tool-panel button.tool-button:hover:enabled {
+    border-color: black;
+}
+.model-tool-panel button.tool-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+.model-tool-panel button.tool-button.pressed {
+    background-color: var(--color-highlight-neutral);
+    outline: 3px solid var(--color-highlight-primary);
+    outline-offset: -3px;
+}
+.model-tool-panel button.tool-button.toggle-active {
+    background-color: var(--color-highlight-neutral);
+    outline: 3px solid var(--color-highlight-primary);
+    outline-offset: -3px;
+}
+
+/* Clipboard and colour controls are top-toolbar actions. */
+.tool-panel button.toolbar-action-button {
+    border: 1px solid var(--color-border);
+    background-color: var(--color-highlight-neutral);
+    padding: 2px;
+    margin: 0;
+    box-sizing: border-box;
+    width: var(--button-size);
+    height: 100%;
+    border-radius: 0.25rem;
+    cursor: pointer;
+}
+.tool-panel button.toolbar-action-button:hover:enabled {
+    border-color: black;
+}
+.tool-panel button.toolbar-action-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.toolbar-colour-control {
+    position: relative;
+    width: var(--button-size);
+    height: var(--button-size);
+}
+.toolbar-colour-picker {
+    position: absolute;
+    left: 0;
+    top: calc(100% + 0.35rem);
+    display: grid;
+    grid-template-columns: repeat(4, 1.6rem);
+    gap: 0.2rem;
+    padding: 0.4rem;
+    background: var(--color-white);
+    border: 1px solid var(--color-border);
+    border-radius: 0.3rem;
+    box-shadow: var(--shadow-menu);
+    z-index: 1000;
+}
+.toolbar-colour-picker[hidden] {
+    display: none;
+}
+.toolbar-colour-picker button.toolbar-colour-swatch {
+    width: 1.6rem;
+    height: 1.6rem;
+    min-width: 0;
+    padding: 0.2rem;
+    border: 1px solid var(--color-border);
+    border-radius: 0.2rem;
+    background: var(--color-white);
+    cursor: pointer;
+}
+.toolbar-colour-picker button.toolbar-colour-swatch::before {
+    content: "";
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: 0.1rem;
+    background: var(--swatch);
+}
+.toolbar-colour-picker button.toolbar-colour-swatch:hover {
+    border-color: black;
+}
+#svgplanebackground {
+    background-color: white;
+    min-width: 0;
+    min-height: 0;
+}
+
 /* buttons title */
 [data-title] {
     position: relative;
@@ -169,6 +330,16 @@ text.name_element {
     height: 100%;
     border-radius: 0.25rem;
 }
+
+button.tool-button .toolbar-inline-icon,
+button.toolbar-action-button .toolbar-inline-icon {
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    box-sizing: border-box;
+    padding: 2px;
+}
+
 button.tool-button img {
     width: 100%; 
     pointer-events: none;
@@ -195,9 +366,6 @@ button.tool-button img {
 .tool-panel button.tool-button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-}
-#tools-menu-button.hidden {
-    display: none !important;
 }
 /* progress bar */
 #progress-bar {
@@ -254,7 +422,7 @@ button.tool-button img {
     font-size: 10px;
     color: var(--color-text-secondary);
 }
-#btn_ignore_units {
+#btn_check_units {
     height: 100%; 
     vertical-align: top; 
     font-family: Arial, Helvetica, sans-serif;
@@ -266,10 +434,10 @@ button.tool-button img {
     box-sizing: border-box;
     border-radius: 0.25rem;
 }
-#btn_ignore_units:hover {
+#btn_check_units:hover {
     border-color: black;
 }
-#btn_ignore_units > #ignore_units-label {
+#btn_check_units > #check_units-label {
     font-size: 10px;
     color: var(--color-text-secondary);
 }
@@ -286,6 +454,11 @@ button.tool-button img {
     box-sizing: border-box;
     border-radius: 0.25rem;
     font-size: 0.75rem;
+    cursor: pointer;
+}
+#unsaved_changes:hover {
+    border-color: currentColor;
+    filter: brightness(0.97);
 }
 #unsaved_changes.hidden {
     display: none;
@@ -316,6 +489,50 @@ table.sticky-table th {
     position: sticky;
     top: 0;
     background-color: white;
+}
+/* Multi-run tables use one sticky THEAD block rather than two independently
+   sticky rows. Keeping the header as a single painted layer avoids the tiny
+   border offsets/overlaps that appear while scrolling in Chromium/Electron. */
+table.sticky-table.systemika-multi-run-table {
+    --systemika-table-header-row-height: 34px;
+    border-collapse: separate;
+    border-spacing: 0;
+    border-top: 1px solid var(--table-border-color);
+    border-left: 1px solid var(--table-border-color);
+}
+table.sticky-table.systemika-multi-run-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 6;
+    background: white;
+}
+table.sticky-table.systemika-multi-run-table thead th {
+    position: static;
+    top: auto;
+    height: var(--systemika-table-header-row-height);
+    box-sizing: border-box;
+    background: white;
+    border-top: 0;
+    border-left: 0;
+    border-right: 1px solid var(--table-border-color);
+    border-bottom: 1px solid var(--table-border-color);
+}
+table.sticky-table.systemika-multi-run-table th.time-header-cell[rowspan="2"] {
+    height: calc(2 * var(--systemika-table-header-row-height));
+    vertical-align: middle;
+    border-right-color: black;
+}
+table.sticky-table.systemika-multi-run-table tbody td {
+    border-top: 0;
+    border-left: 0;
+    border-right: 1px solid var(--table-border-color);
+    border-bottom: 1px solid var(--table-border-color);
+}
+/* The generic sticky-table pseudo borders are useful for the old one-row
+   header, but create duplicate/offset horizontal strokes on a sticky THEAD. */
+table.sticky-table.systemika-multi-run-table thead th::after,
+table.sticky-table.systemika-multi-run-table thead th::before {
+    display: none;
 }
 table.sticky-table th::after {
     /* Make border-bottom since border does follow element with sticky */

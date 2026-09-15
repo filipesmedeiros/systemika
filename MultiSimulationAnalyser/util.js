@@ -149,6 +149,53 @@ function xalert(message,close_function) {
 }
 
 
+// Route browser-native alerts through the analyser's own responsive jQuery UI
+// message box. Native alert dialogs can lose pointer focus in Electron on some
+// Linux window managers.
+if (typeof window !== "undefined" && !window.__systemikaAnalyserNativeAlert) {
+	window.__systemikaAnalyserNativeAlert = typeof window.alert === "function" ? window.alert.bind(window) : null;
+	window.alert = function(message) {
+		xalert(String(message == null ? "" : message));
+	};
+}
+
+function xprompt(message, defaultValue, callback) {
+	var messagebox = $(document.createElement('div'));
+	messagebox.attr('title', 'Input');
+	var label = $(document.createElement('div')).text(String(message == null ? '' : message));
+	var input = $(document.createElement('input'));
+	input.attr('type', 'text').css({width: '100%', 'box-sizing': 'border-box', 'margin-top': '8px'});
+	input.val(defaultValue == null ? '' : defaultValue);
+	messagebox.append(label).append(input);
+	messagebox.dialog({
+		position: 'center',
+		modal: true,
+		resizable: false,
+		width: 420,
+		buttons: {
+			Cancel: function() { $(this).dialog('close'); },
+			OK: function() {
+				var value = input.val();
+				$(this).dialog('close');
+				if (callback) callback(value);
+			}
+		},
+		open: function() {
+			setTimeout(function() { input.focus().select(); }, 0);
+		},
+		close: function() { $(this).remove(); }
+	});
+	input.on('keydown', function(event) {
+		if (event.key === 'Enter') {
+			event.preventDefault();
+			var value = input.val();
+			messagebox.dialog('close');
+			if (callback) callback(value);
+		}
+	});
+}
+
+
 // Does alert and highlight in one step
 function xalert_highlight(message,highlight_element, close_function) {
 	highlight(highlight_element);

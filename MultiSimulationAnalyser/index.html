@@ -8,7 +8,7 @@ terms of the Affero General Public License (http://www.gnu.org/licenses/agpl-3.0
 -->
 <html>
     <head>
-        <title>StochSD</title>
+        <title>Systemika Studio</title>
         <meta charset="utf-8">
 
 		<!-- build:css multisimulationanalyser.min.css  -->
@@ -56,14 +56,37 @@ terms of the Affero General Public License (http://www.gnu.org/licenses/agpl-3.0
         <script src="stocsd.js"></script>
         <!-- endbuild -->
         
-        <link rel="shortcut icon" type="image/png" href="../app-icons/stochsd.png"/>
+        <link rel="shortcut icon" type="image/png" href="../app-icons/systemika.png"/>
 
         <link rel="manifest" href="multisimulationanalyser-manifest.json">
 
         <script>
-            navigator.serviceWorker.register('multisimulationanalyser-serviceworker.js').then(function() {
-                console.log('service worker register');
-            });
+            // Service Workers are unavailable on file:// pages. Systemika can
+            // still be opened directly from start.html, so register only on
+            // supported web origins instead of throwing during startup.
+            if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+                navigator.serviceWorker.register('multisimulationanalyser-serviceworker.js').then(function() {
+                    console.log('service worker register');
+                }).catch(function(error) {
+                    console.warn('Systemika service worker registration was skipped:', error);
+                });
+            }
+        </script>
+
+        <script>
+            // The Windows desktop launcher uses this heartbeat to detect when
+            // the dedicated browser window has been closed and then shuts down
+            // its private localhost server. It is harmless in ordinary web use.
+            (function systemikaDesktopHeartbeat() {
+                function ping() {
+                    if (window.location.protocol === "http:" &&
+                        (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
+                        fetch("/__systemika_ping", { cache: "no-store" }).catch(function() {});
+                    }
+                }
+                ping();
+                window.setInterval(ping, 30000);
+            })();
         </script>
     </head>
     <!--body onload="load()" style="background-color: #CFB897; margin: 0; overflow: none;"-->

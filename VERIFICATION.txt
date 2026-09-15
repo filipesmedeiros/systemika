@@ -1,0 +1,24 @@
+Systemika Studio 1.0.0 - Final public release verification
+Date: 2026-09-14
+
+Automated regression verification:
+- 233/233 tests passing with: npm test
+- 17 permanent validation models under validation-models/
+
+Verified classroom interface:
+- Help menu is Systemika-specific: Getting Started, Keyboard Shortcuts, Functions & Equations, Unit Checking, Preferences, About, License, Third-party Notices.
+- Obsolete StochSD manuals/support links, Full Potential CSS material, restart items, and hidden legacy plugin-menu access are absent.
+- Histogram output is available on the toolbar with shortcut H and supports multi-run comparison with shared bins and translucent overlays.
+- Single-run Histogram uses light gray fill with black bin borders and no point markers.
+- Hide/Unhide Question Marks toolbar control and Q shortcut are present; hiding markers does not disable definition validation.
+- Preferences, About, license text, and third-party notices use current Systemika terminology/provenance.
+
+Simulation and validation:
+- Native Systemika engine retained.
+- Strict unit checker retained.
+- Permanent validation set retained.
+
+Desktop packaging:
+- Electron is pinned to 44.3.0 for Electron-based source, Windows, and Linux packaging.
+- Public packaging metadata consistently uses Systemika Studio 1.0.0.
+- macOS Universal app builder is included as BUILD_MACOS_INSTALLER.command.

@@ -51,8 +51,10 @@ function nameIsFree(name) {
 
 var makeGhost = function(item, pos=null) {
 	if(!item) {
-		alert("Item must be provided");
-		return;
+		// Recoverable UI condition: never use a browser-native alert here.
+		if (typeof xAlert === "function") xAlert("Please select an item to ghost.");
+		else console.warn("Ghost source item must be provided.");
+		return null;
 	}
 	dpopup("Makeing ghost");
 	//~ var provided = item.value;
@@ -207,6 +209,42 @@ function findLinkedInPrimitives(id) {
 }
 
 /*
+	Method: getLinkedPrimitives
+
+	Returns the model entities whose values are available to a model entity through
+	Systemika Links. For a normal one-way Link only the source is visible to the
+	target. A bidirectional Link also makes the target visible to the source.
+
+	This helper intentionally mirrors Systemika's directed-link semantics instead
+	of relying on the previous general-purpose neighborhood implementation.
+*/
+function getLinkedPrimitives(primitive) {
+	if (!primitive) return [];
+	let id = getID(primitive);
+	let result = [];
+	let seen = new Set();
+
+	function add(item) {
+		if (!item) return;
+		let itemId = getID(item);
+		if (itemId == null || seen.has(String(itemId))) return;
+		seen.add(String(itemId));
+		result.push(item);
+	}
+
+	for (let link of primitives("Link")) {
+		if (link.target && String(link.target.id) === String(id)) {
+			add(link.source);
+		}
+		if (link.source && String(link.source.id) === String(id) && link.getAttribute("BiDirectional") === "true") {
+			add(link.target);
+		}
+	}
+
+	return result;
+}
+
+/*
 	Method: replaceName
 	replaces all instences of a variable name in a definition (FlowRate, InitialValue, Equation)
 
@@ -308,6 +346,18 @@ function getTypeNew(prim) {
 	if (type === "Variable" && prim.getAttribute("isConstant") === "true") {
 		type = "Constant";
 	}
+	return type;
+}
+
+/**
+ * Return the canonical Systemika model-entity term. This deliberately hides
+ * legacy .ssd storage tags such as Variable and Converter from user-facing UI.
+ */
+function getSystemikaType(prim) {
+	if (typeof systemikaTypeName === "function") return systemikaTypeName(prim);
+	let type = getTypeNew(prim);
+	if (type === "Variable") return "Auxiliary";
+	if (type === "Converter") return "Lookup";
 	return type;
 }
 

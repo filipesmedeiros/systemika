@@ -1,22 +1,47 @@
 {
-	"appId": "org.stochsd.desktop",
-	"productName": "StochSD",
-	"directories": {
-		"app": "output/app",
-		"output": "output/dist-electron"
-	},
-	"mac": {
-		"target": ["dmg", "zip"],
-		"icon": "../app-icons/stochsd.icns",
-		"category": "public.app-category.education"
-	},
-	"linux": {
-		"target": ["AppImage"],
-		"icon": "../app-icons/stochsd.png",
-		"category": "Education;Science"
-	},
-	"win": {
-		"target": ["portable"],
-		"icon": "../app-icons/stochsd.ico"
-	}
+  "appId": "org.systemika.studio",
+  "productName": "Systemika Studio",
+  "directories": {
+    "app": "output/app",
+    "output": "output/dist-electron"
+  },
+  "mac": {
+    "target": [
+      "dmg",
+      "zip"
+    ],
+    "icon": "../app-icons/systemika.icns",
+    "category": "public.app-category.education"
+  },
+  "linux": {
+    "target": [
+      "AppImage"
+    ],
+    "icon": "../app-icons/systemika.png",
+    "category": "Education;Science"
+  },
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "icon": "../app-icons/systemika.ico",
+    "artifactName": "Systemika-Studio-Setup-${version}-${arch}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowElevation": true,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Systemika Studio",
+    "uninstallDisplayName": "Systemika Studio",
+    "deleteAppDataOnUninstall": false,
+    "runAfterFinish": true
+  }
 }

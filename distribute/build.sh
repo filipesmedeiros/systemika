@@ -1,4 +1,5 @@
-#!/bin/bash
-npm install
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+npm install --no-audit --no-fund
 npm run build
-npm run install-analytics

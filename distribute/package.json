@@ -1,24 +1,25 @@
 {
-  "name": "systemika",
-  "version": "2026.09.04",
-  "description": "systemika build package",
+  "name": "systemika-studio-build",
+  "version": "1.0.0",
+  "description": "Systemika Studio packaging tools",
   "author": "Filipe Medeiros <hello@filipesm.eu>",
   "devDependencies": {
-    "electron": "^44.0.0",
-    "electron-builder": "^26.0.0",
-    "gulp-useref": "^5.0.0"
+    "electron": "44.3.0",
+    "electron-builder": "26.0.0",
+    "gulp-useref": "5.0.0"
   },
   "dependencies": {
-    "gulp": "^5.0.1",
-    "gulp-rename": "^2.1.0"
+    "gulp": "5.0.1",
+    "gulp-rename": "2.1.0"
   },
   "scripts": {
-    "update-version": "node ./update-stochsd-version-from-git.js",
     "build": "gulp",
-    "install-analytics": "bash ./install-analytics.sh",
     "dist": "npm run build && electron-builder --config electron-builder.json --mac --linux --win",
     "dist:mac": "npm run build && electron-builder --config electron-builder.json --mac",
     "dist:linux": "npm run build && electron-builder --config electron-builder.json --linux",
-    "dist:win": "npm run build && electron-builder --config electron-builder.json --win"
-  }
+    "dist:win": "npm run build && electron-builder --config electron-builder.json --win",
+    "dist:win-installer": "npm run build && electron-builder --config electron-builder.json --win nsis --x64",
+    "dist:win-portable": "npm run build && electron-builder --config electron-builder-portable.json --win portable --x64"
+  },
+  "productName": "Systemika Studio"
 }

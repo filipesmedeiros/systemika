@@ -130,7 +130,7 @@ function var_array_exists(varname_array,target) {
 }
 function setstartseed(seedvalue) {
     // The {"value":seedvalue) instead of just seedvalue
-    // is to replicate the behavoiur of insightmaker SetRandSeed
+    // retained only for legacy import compatibility; native simulation does not use random seeds
     Math.seedrandom(seedvalue);
 }
 function export_model() {
@@ -139,7 +139,7 @@ function export_model() {
     // IM uses getGraphXml(graph)
     // see Utilities.js
     var graph_dom=enc.encode(graph.getModel());
-    //returnobj.xml_data="<InsightMakerModel>"+graph_dom.innerHTML+"</InsightMakerModel>";
+    // Legacy import/export wrapper example retained for format compatibility.
     returnobj.xml_data=getGraphXml(graph);
     returnresult(returnobj,"export_model_return");
 }

@@ -67,11 +67,11 @@ function XmlAttributesHashMap(xmlAttributes) {
 
 function xmlPrimitive(primitive) {
 	var type = getType(primitive);
-	var superClass = get_object(getID(primitive)).superClass;
-	// Settings and other non visible primtives does not have any superClass
-	if(superClass == undefined) {
-		superClass = "";
-	}
+	var visualObject = (typeof get_object === "function") ? get_object(getID(primitive)) : null;
+	var superClass = visualObject && visualObject.superClass ? visualObject.superClass : "";
+	// File output must not depend on a fully initialized visual object. Infer
+	// connector semantics directly from the model type when necessary.
+	if ((type == "Flow" || type == "Link") && superClass == "") superClass = "TwoPointer";
 	//~ alert(type+" "+superClass);
 	
 	var nodeAttributes = {};
@@ -104,8 +104,9 @@ function xmlPrimitive(primitive) {
 	
 	if(type=="Ghost") {
 		var sourceID=primitive.getAttribute("Source");
-		var sourceType=getType(findID(sourceID));
-		style=sourceType.toLowerCase()+";opacity=30;";
+		var sourcePrimitive = sourceID ? findID(sourceID) : null;
+		var sourceType=sourcePrimitive ? getType(sourcePrimitive) : null;
+		style=(sourceType ? sourceType.toLowerCase() : "ghost")+";opacity=30;";
 	}
 	
 	if(superClass == "TwoPointer") {
@@ -167,9 +168,10 @@ function xmlPrimitive(primitive) {
 	return xmlNode(type,nodeAttributes,cellAttributes,geometryAttributes,geometryChildren);
 }
 
-class InsightMakerDocument {
+class SystemikaModelDocument {
 	constructor() {
 		// http://stackoverflow.com/questions/14340894/create-xml-in-javascript
+		// Keep the historical outer tag so existing .ssd tooling remains compatible.
 		xmlDoc = document.implementation.createDocument(null, "InsightMakerModel");
 		root = xmlDoc.createElement("root");
 		
@@ -193,9 +195,14 @@ class InsightMakerDocument {
 		// If order is different then seed will not work.
 		var primitiveArray = primitives().reverse();
 		for(var prim of primitiveArray) {
-			if (saveblePrimitiveTypes.includes(getType(prim))) {
-				root.appendChild(xmlPrimitive(prim));
+			if (!saveblePrimitiveTypes.includes(getType(prim))) continue;
+			// A Link is meaningful only when both endpoints exist. Never persist an
+			// incomplete drag artifact even if one survives a future editor error.
+			if (getType(prim) == "Link") {
+				var ends = getEnds(prim);
+				if (!ends || !ends[0] || !ends[1]) continue;
 			}
+			root.appendChild(xmlPrimitive(prim));
 		}
 	}
 	getXmlString() {
@@ -206,7 +213,7 @@ class InsightMakerDocument {
 }
 
 function createModelFileData() {
-	InsightMakerDocumentWriter = new InsightMakerDocument();
-	InsightMakerDocumentWriter.appendPrimitives();
-	return InsightMakerDocumentWriter.getXmlString();
+	SystemikaModelDocumentWriter = new SystemikaModelDocument();
+	SystemikaModelDocumentWriter.appendPrimitives();
+	return SystemikaModelDocumentWriter.getXmlString();
 }

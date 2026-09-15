@@ -1,16 +1,7 @@
-# NW.js  
-https://github.com/nwjs/nw.js  
-**MIT License**  
-  
-Copyright (c) 2011-2019 NW.js Authors   
-Copyright (c) 2011-2019 The Chromium Authors   
-Copyright (c) 2011-2018 Intel Corp   
-  
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:   
-  
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.  
-  
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.  
+# Systemika open-source notices
+
+Systemika contains original Systemika code and code derived from StochSD under the GNU Affero General Public License v3. See `LICENSE.txt` for the application license. The sections below list third-party libraries currently bundled with the application. Historical provenance is documented separately in the source distribution.
+
 # Electron  
 https://electronjs.org/  
 https://github.com/electron/electron/blob/master/LICENSE  
@@ -27,7 +18,8 @@ furnished to do so, subject to the following conditions:
 The above copyright notice and this permission notice shall be included in  
 all copies or substantial portions of the Software.  
   
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.  
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 # jQuery  
 https://jquery.org/  
 https://github.com/jquery/jquery/blob/master/LICENSE.txt  
@@ -44,7 +36,8 @@ furnished to do so, subject to the following conditions:
 The above copyright notice and this permission notice shall be included in  
 all copies or substantial portions of the Software.  
   
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.  
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 # jqPlot  
 https://github.com/jqPlot/jqPlot  
 **MIT License**  
@@ -59,8 +52,8 @@ Date instance methods
 Author: Ken Snyder (ken d snyder at gmail dot com) Date: 2008-09-10 Version: 2.0.2 (http://kendsnyder.com/sandbox/date/) License: Creative Commons Attribution License 3.0 (http://creativecommons.org/licenses/by/3.0/)  
   
 JavaScript printf/sprintf functions  
-Author: Ash Searle Version: 2007.04.27 http://hexmen.com/blog/2007/03/printf-sprintf/ http://hexmen.com/js/sprintf.js The author (Ash Searle) has placed this code in the public domain: "This code is unrestricted: you are free to use it however you like."  
-  
+Author: Ash Searle Version: 2007.04.27 http://hexmen.com/blog/2007/03/printf-sprintf/ http://hexmen.com/js/sprintf.js The author (Ash Searle) has placed this code in the public domain: "This code is unrestricted: you are free to use it however you like."
+
 # jQuery-UI  
 https://github.com/jquery/jquery-ui  
 https://github.com/jquery/jquery-ui/blob/master/LICENSE.txt  
@@ -107,14 +100,27 @@ CC0: http://creativecommons.org/publicdomain/zero/1.0/
 All files located in the node_modules and external directories are  
 externally maintained libraries used by this software which have their  
 own licenses; we recommend you read them, as their terms may differ from  
-the terms above.  
+the terms above.
+
+# Normalize.css  
+https://github.com/necolas/normalize.css/  
+https://github.com/necolas/normalize.css/blob/master/LICENSE.md  
+**MIT license**  
   
-# jStat  
-https://github.com/jstat/jstat  
-https://github.com/jstat/jstat/blob/1.x/LICENSE  
-**MIT License**  
+Copyright © Nicolas Gallagher and Jonathan Neal  
   
-Copyright (c) 2013 jStat  
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:  
+  
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.  
+  
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE
+
+# CodeMirror  
+https://codemirror.net  
+https://codemirror.net/LICENSE  
+**MIT license**  
+  
+Copyright (C) 2017 by Marijn Haverbeke <marijnh@gmail.com> and others  
   
 Permission is hereby granted, free of charge, to any person obtaining a copy  
 of this software and associated documentation files (the "Software"), to deal  
@@ -132,81 +138,24 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER  
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,  
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN  
-THE SOFTWARE.  
+THE SOFTWARE.
+
+# IDB-Keyval  
+https://github.com/jakearchibald/idb-keyval  
+https://github.com/jakearchibald/idb-keyval/blob/main/LICENCE  
+**Apache License**  
   
-# Springy  
-https://github.com/dhotson/springy/  
-https://github.com/dhotson/springy/blob/master/LICENSE  
-**MIT License**  
-Copyright (c) 2010 Dennis Hotson  
+Copyright 2016, Jake Archibald  
   
-Permission is hereby granted, free of charge, to any person obtaining a copy  
-of this software and associated documentation files (the "Software"), to deal  
-in the Software without restriction, including without limitation the rights  
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell  
-copies of the Software, and to permit persons to whom the Software is  
-furnished to do so, subject to the following conditions:  
+Licensed under the Apache License, Version 2.0 (the "License");  
+you may not use this file except in compliance with the License.  
+You may obtain a copy of the License at  
   
-The above copyright notice and this permission notice shall be included in  
-all copies or substantial portions of the Software.  
+http://www.apache.org/licenses/LICENSE-2.0  
   
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.  
-# RedBlackTree.js/RedBlackNode.js  
-http://www.kevlindev.com/license.txt  
-**BSD License**  
-Copyright (c) 2000-2004, Kevin Lindsey  
-All rights reserved.  
-  
-Redistribution and use in source and binary forms, with or without  
-modification, are permitted provided that the following conditions are met:  
-  
-- Redistributions of source code must retain the above copyright notice,  
-this list of conditions and the following disclaimer.  
-  
-- Redistributions in binary form must reproduce the above copyright  
-notice, this list of conditions and the following disclaimer in the  
-documentation and/or other materials provided with the distribution.  
-  
-- Neither the name of this software nor the names of its contributors  
-may be used to endorse or promote products derived from this software  
-without specific prior written permission.  
-  
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND  
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED  
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE  
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR  
-ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES  
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;  
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON  
-ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT  
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS  
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.  
-  
-# Normalize.css  
-https://github.com/necolas/normalize.css/  
-https://github.com/necolas/normalize.css/blob/master/LICENSE.md  
-**MIT license**  
-  
-Copyright © Nicolas Gallagher and Jonathan Neal  
-  
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:  
-  
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.  
-  
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE  
-# ANTLR  
-https://www.antlr.org/  
-https://www.antlr.org/license.html  
-**BSD license**  
-  
-Copyright (c) 2012 Terence Parr and Sam Harwell  
-All rights reserved.  
-  
-Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:  
-  
-Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.  
-Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.  
-Neither the name of the author nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.   
-  
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.  
-  
+Unless required by applicable law or agreed to in writing, software  
+distributed under the License is distributed on an "AS IS" BASIS,  
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  
+See the License for the specific language governing permissions and  
+limitations under the License.
+

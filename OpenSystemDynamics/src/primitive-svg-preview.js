@@ -95,6 +95,12 @@ class PrimitiveSvgPreview {
             </g>
          </svg>`,
    }
+   // Canonical Systemika terminology aliases. The legacy keys remain for
+   // .ssd storage compatibility and existing visual-object internals.
+   static {
+      this.primitiveSvgPreview.auxiliary = this.primitiveSvgPreview.variable;
+      this.primitiveSvgPreview.lookup = this.primitiveSvgPreview.converter;
+   }
    static icons = {
       ghost: `<g transform="translate(10, 10) scale(0.4)">
          <path fill="none" stroke="currentColor" stroke-width="2" d="m 9.9828659,-2.772745 c 0,1.3775907 0.2255841,11.8988413 -0.2819803,13.083087 C 9.1933216,11.50264 7.203349,7.3618143 6.3090708,8.2640961 5.4067353,9.1663779 5.0844728,10.004211 3.8921001,10.511744 2.699728,11.011221 1.3945641,8.1996473 0.01689062,8.1996473 -1.3607825,8.1996473 -2.6659466,11.011221 -3.858319,10.511744 -5.050691,10.004211 -5.2601616,9.6014057 -6.1624971,8.6991239 -7.0648332,7.7968422 -9.2320496,11.542923 -9.7396135,10.350622 -10.239121,9.1583207 -9.9490844,-1.3951543 -9.9490844,-2.772745 c 0,-5.4942523 4.4633386,-9.957325 9.96597502,-9.957325 5.50263598,0 9.96597528,4.4630727 9.96597528,9.957325 z">

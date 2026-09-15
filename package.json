@@ -1,14 +1,17 @@
 {
   "name": "systemika",
-  "version": "2026.09.04",
-  "description": "Systemika",
+  "version": "1.0.0",
+  "description": "Systemika Studio educational system dynamics modeling and simulation software",
   "author": "Filipe Medeiros <hello@filipesm.eu>",
   "main": "electron/main.js",
   "scripts": {
+    "start": "electron .",
     "electron": "electron .",
-    "deploy": "npm --prefix distribute run build && rsync -a distribute/output/web/$(node distribute/get-stochsd-version.js)/ uberspace_filipe1:~/www/ssd.systemika.org/"
+    "web": "node web-server.js",
+    "test": "node --test tests/*.test.js"
   },
   "devDependencies": {
-    "electron": "^32.0.0"
-  }
+    "electron": "44.3.0"
+  },
+  "productName": "Systemika Studio"
 }

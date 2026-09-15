@@ -10,22 +10,30 @@ terms of the Affero General Public License (http://www.gnu.org/licenses/agpl-3.0
 var definitionEditor;
 /** @type {ConverterDialog} */
 var converterDialog;
+/** @type {LinkPropertiesDialog} */
+var linkPropertiesDialog;
 /** @type {PreferencesDialog} */
 var preferencesDialog;
 /** @type {SimulationSettings} */
 var simulationSettings;
 /** @type {TimeUnitDialog} */
 var timeUnitDialog;
-/** @type {MacroDialog} */
-var macroDialog;
 /** @type {EquationListDialog} */
 var equationList;
+/** @type {UnitCheckDialog} */
+var unitCheckDialog;
 /** @type {DebugDialog} */
 var debugDialog;
 /** @type {AboutDialog} */
 var aboutDialog;
-/** @type {FullPotentialCSSDialog} */
-var fullPotentialCssDialog;
+/** @type {GettingStartedDialog} */
+var gettingStartedDialog;
+/** @type {KeyboardShortcutsDialog} */
+var keyboardShortcutsDialog;
+/** @type {FunctionsAndEquationsDialog} */
+var functionsAndEquationsDialog;
+/** @type {UnitsHelpDialog} */
+var unitsHelpDialog;
 /** @type {ThirdPartyLicensesDialog} */
 var thirdPartyLicensesDialog;
 /** @type {LicenseDialog} */
@@ -65,7 +73,7 @@ const CANVAS_WIDTH = 6000;
 const CANVAS_HEIGHT = 2000;
 
 // This values are not used by StochSD, as primitives cannot be resized in StochSD
-// They are only used for exporting the model to Insight Maker
+// Legacy geometry defaults retained for .ssd file compatibility
 const type_size = {
 	"stock": [80, 60],
 	"variable": [60, 60],
@@ -78,8 +86,8 @@ const type_size = {
 // the keys are what the visuals have as type
 // The values what new names should be based on when creating new visuals
 const type_basename = {
-	timeplot: "TimePlot",
-	compareplot: "ComparePlot",
+	timeplot: "TimePlot", // legacy TimePlot primitives remain loadable
+	compareplot: "TimePlot",
 	xyplot: "XyPlot",
 	histoplot: "HistoPlot",
 	table: "Table",
@@ -92,9 +100,9 @@ const type_basename = {
 	variable: "Auxiliary",
 	flow: "Flow",
 	link: "Link",
-	converter: "Converter",
+	converter: "Lookup",
 	text: "Text",
-	constant: "Parameter"
+	constant: "Constant"
 };
 
 // Stores Visual objects and connections
@@ -102,6 +110,33 @@ const type_basename = {
 var connection_array = {};
 /** @type {{ [id: string]: OnePointer }} */
 var object_array = {};
+
+// Display preference for the question-mark overlays that flag definition errors.
+// This is intentionally UI-only: definition checking and simulation validation
+// continue to work even when the markers are hidden.
+const DefinitionQuestionMarks = {
+	visible: true,
+	visibilityFor(hasDefinitionError) {
+		return this.visible && hasDefinitionError ? "visible" : "hidden";
+	},
+	toggle() {
+		this.visible = !this.visible;
+		this.refresh();
+	},
+	refresh() {
+		for (let item of Object.values(get_all_objects())) {
+			if (!item || !item.icons || !item.primitive) continue;
+			let prim = item.is_ghost ? findID(item.primitive.getAttribute("Source")) : item.primitive;
+			if (!prim) continue;
+			item.icons.set("questionmark", this.visibilityFor(DefinitionError.has(prim)));
+		}
+		let button = typeof document !== "undefined" ? document.getElementById("btn_question_marks") : null;
+		if (button) {
+			button.setAttribute("aria-pressed", String(!this.visible));
+			button.classList.toggle("toggle-active", !this.visible);
+		}
+	}
+};
 
 const mouse = {
 	// Stores state related to mouse
@@ -112,6 +147,8 @@ const mouse = {
 	downY: 0,
 	x: 0,
 	y: 0,
+	lastCanvasX: NaN,
+	lastCanvasY: NaN,
 	emptyClickDown: false,
 	// NOTE: values for event.which should be used
 	// event.button will give incorrect results
@@ -137,10 +174,29 @@ function applicationReload() {
 
 // Called once a save of any kind has actually succeeded. Cancelling a save
 // dialog must not reach this, or the model looks saved when it is not.
-function markModelSaved() {
-	History.unsavedChanges = false;
-	$("#unsaved_changes").addClass("hidden");
-	window.removeEventListener("beforeunload", checkBeforeClose);
+function markModelSaved(savedState = null) {
+	History.markSaved(savedState);
+}
+
+function refreshSelectionStacking() {
+	if (typeof SVG === "undefined" || !SVG.svgElement || typeof get_selected_root_objects !== "function") return;
+	let selected = Object.values(get_selected_root_objects() || {}).filter(Boolean);
+	SVG.svgElement.classList.toggle("selection-on-top", selected.length > 0);
+}
+
+function timeAxisLabel() {
+	let unit = String(typeof getTimeUnits === "function" ? (getTimeUnits() || "") : "").trim();
+	return unit ? `Time (${unit})` : "Time";
+}
+
+function directedLinkExists(sourceId, targetId, ignoreLinkId = null) {
+	if (sourceId == null || targetId == null) return false;
+	return primitives("Link").some(link => {
+		if (ignoreLinkId != null && String(getID(link)) === String(ignoreLinkId)) return false;
+		return link.source && link.target &&
+			String(link.source.id) === String(sourceId) &&
+			String(link.target.id) === String(targetId);
+	});
 }
 
 // Save into browser storage. Once a model has a name there, Save just
@@ -243,17 +299,55 @@ class History {
 		this.lastUndoState = "";
 		this.undoLimit = 10;
 
-		// Tells if the last state is saved to file
-		// This is used for determining if the program should ask about saving
-		History.unsavedChanges = false;
+		// Keep the exact XML snapshot that was last successfully saved/loaded.
+		// Dirty state must be derived from model state, not merely from whether
+		// an edit has ever happened, otherwise Undo cannot return to "saved".
+		this.savedState = null;
+		this.setUnsavedChanges(false);
+	}
 
+	static setUnsavedChanges(value) {
+		this.unsavedChanges = Boolean(value);
+		if (this.unsavedChanges) {
+			$("#unsaved_changes").removeClass("hidden");
+			window.addEventListener("beforeunload", checkBeforeClose);
+		} else {
+			$("#unsaved_changes").addClass("hidden");
+			window.removeEventListener("beforeunload", checkBeforeClose);
+		}
+	}
+
+	static updateUnsavedState(currentState = null) {
+		let state = currentState;
+		if (state == null && this.undoIndex >= 0 && this.undoIndex < this.undoStates.length) {
+			state = this.undoStates[this.undoIndex];
+		}
+		if (state == null && typeof createModelFileData === "function") {
+			state = createModelFileData();
+		}
+
+		// A null savedState is used only before an initial model baseline exists.
+		// Once a model is loaded or saved, equality with that exact snapshot is
+		// authoritative and Undo/Redo can toggle the indicator in both directions.
+		if (this.savedState == null) {
+			this.setUnsavedChanges(Boolean(state));
+			return;
+		}
+		this.setUnsavedChanges(state !== this.savedState);
+	}
+
+	static markSaved(savedState = null) {
+		this.savedState = savedState != null
+			? savedState
+			: (typeof createModelFileData === "function" ? createModelFileData() : this.getCurrentState());
+		this.setUnsavedChanges(false);
 	}
 
   static storeUndoState() {
 		// Create new XML for state
-		let InsightMakerDocumentWriter = new InsightMakerDocument();
-		InsightMakerDocumentWriter.appendPrimitives();
-    let undoState = InsightMakerDocumentWriter.getXmlString();
+		let modelDocumentWriter = new SystemikaModelDocument();
+		modelDocumentWriter.appendPrimitives();
+    let undoState = modelDocumentWriter.getXmlString();
 
     // This means it's only the "Setting" and "Display" nodes,
     // which means the model is empty
@@ -261,20 +355,18 @@ class History {
 
 		// Add to undo history if it is different then previous state
 		if (this.lastUndoState != undoState) {
-      $("#unsaved_changes").removeClass("hidden");
-      window.addEventListener("beforeunload", checkBeforeClose);
 			// Preserves only states from 0 to undoIndex
 			this.undoStates.splice(this.undoIndex + 1);
 
 			this.undoStates.push(undoState);
 			this.undoIndex = this.undoStates.length - 1;
 			this.lastUndoState = undoState;
-			this.unsavedChanges = true;
 
 			if (this.undoLimit < this.undoStates.length) {
 				this.undoStates = this.undoStates.slice(this.undoStates.length - this.undoLimit);
 				this.undoIndex = this.undoStates.length - 1;
 			}
+			this.updateUnsavedState(undoState);
 		}
 	}
 
@@ -283,7 +375,8 @@ class History {
 		this.undoStates.push(newState);
 		this.undoIndex = 0;
 		this.lastUndoState = newState;
-		this.unsavedChanges = false;
+		this.savedState = newState;
+		this.setUnsavedChanges(false);
 	}
 
 	static doUndo() {
@@ -317,15 +410,21 @@ class History {
 	static restoreUndoState() {
 		this.lastUndoState = this.undoStates[this.undoIndex];
 		loadModelFromXml(this.lastUndoState);
+		this.updateUnsavedState(this.lastUndoState);
 	}
 
 	static clearUndoHistory() {
 		this.undoStates = [];
 		this.undoIndex = -1;
+		this.lastUndoState = "";
+		this.savedState = null;
+		this.setUnsavedChanges(false);
 	}
 
 	static toLocalStorage() {
 		localStorage.setItem("undoState_length", this.undoStates.length);
+		if (this.savedState == null) localStorage.removeItem("history_saved_state");
+		else localStorage.setItem("history_saved_state", this.savedState);
 
 		for (let i in this.undoStates) {
 			let state = this.undoStates[i];
@@ -337,6 +436,7 @@ class History {
 
 	static fromLocalStorage() {
 		this.clearUndoHistory();
+		this.savedState = localStorage.getItem("history_saved_state");
 		let undoState_length = localStorage.getItem("undoState_length");
 		for (let i = 0; i < undoState_length; i++) {
 			let state = localStorage.getItem("undoState_" + i);
@@ -507,86 +607,8 @@ defaultPrimitiveBeforeDestroyHandler = function (primitive) {
 	stochsd_delete_primitive_and_references(getID(primitive));
 }
 
-var sdsMacros = `### Imported Macros from StochSD ###
-T() <- Unitless(Time())
-DT() <- Unitless(TimeStep())
-TS() <- Unitless(TimeStart())
-TL() <- Unitless(TimeLength())
-TE() <- Unitless(TimeEnd())
-PoFlow(Lambda) <- RandPoisson(Dt()*Lambda)/DT()
-PulseFcn(Start, Volume, Repeat) <- Pulse(Start, Volume/DT(), 0, Repeat)
-### End of StochSD Macros ###
-### Put your own macro code below ###`;
-
-// Add the StocSD macro-script to the beggning of the Macro
-function appendStochSDMacros() {
-	let macros = getMacros();
-	if (macros === undefined) {
-		macros = "";
-	}
-	if (macros.substring(0, sdsMacros.length) != sdsMacros) {
-		macros = sdsMacros + "\n\n\n" + macros;
-		setMacros(macros);
-	}
-}
-
-// Replace macro with the StochSD macro-script
-function setStochSDMacros() {
-	let macros = sdsMacros + "\n\n\n";
-	setMacros(macros);
-}
-
-let showMacros = function () {
-	macroDialog.show();
-};
-
-function getLinkedPrimitives(primitive) {
-	let result = [];
-	let allLinks = primitives("Link");
-	for (let link of allLinks) {
-		if (link.target == primitive) {
-			if (link.source != null) {
-				result.push(link.source);
-			}
-		}
-	}
-	return result;
-}
-
-// External API support
-window.addEventListener('message', callAPI, false);
-function callAPI(e) {
-	try {
-		e.source.postMessage(eval(e.data), "*");
-	} catch (err) {
-
-	}
-}
-
-// sdsLoadFunctions is and must be called from Functions.js
-function sdsLoadFunctions() {
-	defineFunction("T", { params: [] }, function (x) {
-		return new Material(simulate.time().toNum().value);
-	});
-	defineFunction("DT", { params: [] }, function (x) {
-		return new Material(simulate.timeStep.toNum().value);
-	});
-	defineFunction("TS", { params: [] }, function (x) {
-		return new Material(simulate.timeStart.toNum().value);
-	});
-	defineFunction("TL", { params: [] }, function (x) {
-		return new Material(simulate.timeLength.toNum().value);
-	});
-	defineFunction("TE", { params: [] }, function (x) {
-		return new Material(simulate.timeEnd.toNum().value);
-	});
-	defineFunction("PoFlow", { params: [{ name: "Rate", noUnits: true, noVector: true }] }, function (x) {
-		let dt = simulate.timeStep.toNum().value;
-
-		return new Material(RandPoisson(dt * x[0].toNum().value) / dt);
-	});
-
-}
+// Legacy StochSD macros and Insight Maker simulation-function hooks were removed.
+// Systemika equations are evaluated exclusively by systemika-engine.js.
 
 function getVisibleNeighborhoodIds(id) {
 	let neighbors = neighborhood(findID(id));
@@ -1019,6 +1041,7 @@ class OnePointer extends BaseObject {
 		if (this.icons) {
 			this.icons.setColor("white");
 		}
+		refreshSelectionStacking();
 	}
 	unselect() {
 		this.selected = false;
@@ -1028,6 +1051,7 @@ class OnePointer extends BaseObject {
 		if (this.icons) {
 			this.icons.setColor(this.color);
 		}
+		refreshSelectionStacking();
 	}
 	update() {
 		this.group.setAttribute("transform", "translate(" + this.pos[0] + "," + this.pos[1] + ")");
@@ -1035,7 +1059,7 @@ class OnePointer extends BaseObject {
 		let prim = this.is_ghost ? findID(this.primitive.getAttribute("Source")) : this.primitive;
 		if (this.icons && prim) {
 			const hasDefError = DefinitionError.has(prim);
-			this.icons.set("questionmark", hasDefError ? "visible" : "hidden");
+			this.icons.set("questionmark", DefinitionQuestionMarks.visibilityFor(hasDefError));
 			this.icons.set("dice", (!hasDefError && hasRandomFunction(getValue(prim))) ? "visible" : "hidden");
 		}
 
@@ -1549,14 +1573,11 @@ class ConverterVisual extends BasePrimitive {
 		return [xEdge, yEdge];
 	}
 	attachEvent() {
-		do_global_log("this primitive");
-		do_global_log(this.primitive);
-		let linkedPrimitives = getLinkedPrimitives(this.primitive);
-		do_global_log(linkedPrimitives);
-		if (linkedPrimitives.length > 0) {
-			do_global_log("choose yes");
-			this.primitive.setAttribute("Source", linkedPrimitives[0].id);
-		}
+		// A Lookup's input is defined only by its single incoming Link. Outgoing
+		// Links must never change the Lookup source. When the incoming Link is
+		// removed, the Lookup falls back to Time.
+		let incoming = findLinkedInPrimitives(this.id);
+		this.primitive.setAttribute("Source", incoming.length > 0 ? incoming[0].id : "Time");
 	}
 	nameDoubleClick() {
 		openPrimitiveDialog(this.id, "name")
@@ -1629,6 +1650,7 @@ class TwoPointer extends BaseObject {
 		for (let anchor of this.getAnchors()) {
 			anchor.setVisible(false);
 		}
+		refreshSelectionStacking();
 	}
 	select() {
 		this.selected = true;
@@ -1636,6 +1658,7 @@ class TwoPointer extends BaseObject {
 			anchor.select();
 			anchor.setVisible(true);
 		}
+		refreshSelectionStacking();
 	}
 
 	update() {
@@ -1676,7 +1699,6 @@ class BaseConnection extends TwoPointer {
 			let targetPoint = getTargetPosition(primitive);
 			this.start_anchor.setPos(sourcePoint);
 			this.end_anchor.setPos(targetPoint);
-			alert("Position got updated");
 		}
 	}
 
@@ -1689,10 +1711,10 @@ class BaseConnection extends TwoPointer {
 	}
 	setStartAttach(new_start_attach) {
 		if (new_start_attach != null && this.getEndAttach() == new_start_attach) {
-			return;		// Will not attach if other anchor is attached to same
+			return false;		// Will not attach if other anchor is attached to same
 		}
 		if (new_start_attach != null && this.isAcceptableStartAttach(new_start_attach) === false) {
-			return; 	// Will not attach if not acceptable attachType
+			return false; 	// Will not attach if not acceptable attachType
 		}
 
 		// Update the attachment primitive
@@ -1706,6 +1728,7 @@ class BaseConnection extends TwoPointer {
 
 		// Trigger the attach event on the new attachment primitives
 		this.triggerAttachEvents();
+		return true;
 	}
 	getStartAttach() {
 		return this._start_attach;
@@ -1713,10 +1736,10 @@ class BaseConnection extends TwoPointer {
 	setEndAttach(new_end_attach) {
 		do_global_log("end_attach");
 		if (new_end_attach != null && this.getStartAttach() == new_end_attach) {
-			return; 	// Will not attach if other anchor is attached to same
+			return false; 	// Will not attach if other anchor is attached to same
 		}
 		if (new_end_attach != null && this.isAcceptableEndAttach(new_end_attach) === false) {
-			return;		// Will not attach if not acceptable attachType
+			return false;		// Will not attach if not acceptable attachType
 		}
 
 		// Update the attachment primitive
@@ -1729,6 +1752,7 @@ class BaseConnection extends TwoPointer {
 
 		// Trigger the attach event on the new attachment primitives
 		this.triggerAttachEvents();
+		return true;
 	}
 	getEndAttach() {
 		return this._end_attach;
@@ -2182,7 +2206,7 @@ class FlowVisual extends BaseConnection {
 
 		if (this.primitive && this.icons) {
 			const hasDefError = DefinitionError.has(this.primitive);
-			this.icons.set("questionmark", hasDefError ? "visible" : "hidden");
+			this.icons.set("questionmark", DefinitionQuestionMarks.visibilityFor(hasDefError));
 			this.icons.set("dice", (!hasDefError && hasRandomFunction(getValue(this.primitive))) ? "visible" : "hidden");
 		}
 	}
@@ -2364,6 +2388,51 @@ class HtmlTwoPointer extends TwoPointer {
 	}
 }
 
+// Build a side-by-side comparison table. Each selected run owns a group of
+// variable columns, while Time remains the shared first column. The union of
+// time points is used so runs with different time grids remain aligned without
+// fabricating/interpolating values.
+function buildSideBySideRunTable(runBlocks, variableCount) {
+	if (!Array.isArray(runBlocks) || !runBlocks.length) return [];
+	if (runBlocks.length === 1) return runBlocks[0].results.map(row => row.slice());
+
+	let rowsByTime = new Map();
+	let valueWidth = runBlocks.length * variableCount;
+	let timeKey = (value) => {
+		let number = Number(value);
+		return Number.isFinite(number) ? `n:${number.toPrecision(14)}` : `s:${String(value)}`;
+	};
+
+	for (let runIndex = 0; runIndex < runBlocks.length; runIndex++) {
+		let block = runBlocks[runIndex];
+		for (let sourceRow of block.results) {
+			let key = timeKey(sourceRow[0]);
+			if (!rowsByTime.has(key)) {
+				rowsByTime.set(key, {
+					time: sourceRow[0],
+					values: new Array(valueWidth).fill(null)
+				});
+			}
+			let target = rowsByTime.get(key);
+			for (let variableIndex = 0; variableIndex < variableCount; variableIndex++) {
+				// Variable-first ordering: all selected runs for Variable 1, then all
+				// selected runs for Variable 2, etc. This matches the way users
+				// visually compare scenarios in a table.
+				target.values[variableIndex * runBlocks.length + runIndex] = sourceRow[variableIndex + 1] ?? null;
+			}
+		}
+	}
+
+	return Array.from(rowsByTime.values())
+		.sort((a, b) => {
+			let aNumber = Number(a.time);
+			let bNumber = Number(b.time);
+			if (Number.isFinite(aNumber) && Number.isFinite(bNumber)) return aNumber - bNumber;
+			return String(a.time).localeCompare(String(b.time));
+		})
+		.map(entry => [entry.time].concat(entry.values));
+}
+
 class TableVisual extends HtmlTwoPointer {
 	constructor(id, type, pos0, pos1) {
 		super(id, type, pos0, pos1);
@@ -2372,6 +2441,7 @@ class TableVisual extends HtmlTwoPointer {
 		}
 		RunResults.subscribeRun(id, this.runHandler);
 		this.data = new TableData();
+		initializeMultiRunSelection(this.primitive);
 	}
 	removePlotReference(removeId) {
 		let result = removeDisplayId(this.primitive, removeId);
@@ -2380,24 +2450,47 @@ class TableVisual extends HtmlTwoPointer {
 		}
 	}
 	render() {
+		let runNames = getCompareRunNames(this.primitive);
+		if (!runNames.length) runNames = [""];
+		if (!ensureDisplayRunsAvailable(this.primitive, () => this.render())) {
+			this.updateHTML(`<div class="empty-plot-header">Table</div><div style="padding:8px;">Loading selected run data…</div>`);
+			return;
+		}
 		let IdsToDisplay = getDisplayIds(this.primitive);
 		this.primitive.setAttribute("Primitives", IdsToDisplay.join(","));
-		do_global_log(IdsToDisplay);
 		this.data.namesToDisplay = IdsToDisplay.map(findID).map(getName);
-		do_global_log("names to display");
-		do_global_log(JSON.stringify(this.data.namesToDisplay));
+
+		let bounds = getCompareRunBounds(this.primitive);
 		let limits = JSON.parse(this.primitive.getAttribute("TableLimits"));
-		limits.start.value = limits.start.auto ? getTimeStart() : limits.start.value;
-		limits.end.value = limits.end.auto ? getTimeStart() + getTimeLength() : limits.end.value;
+		let defaultStart = bounds ? bounds.min : RunResults.getDataTimeStart(runNames[0]);
+		let defaultEnd = bounds ? bounds.max : defaultStart + RunResults.getDataTimeLength(runNames[0]);
+		limits.start.value = limits.start.auto ? defaultStart : limits.start.value;
+		limits.end.value = limits.end.auto ? defaultEnd : limits.end.value;
 		limits.step.value = limits.step.auto ? this.dialog.getDefaultPlotPeriod() : limits.step.value;
 		let length = limits.end.value - limits.start.value;
 		this.primitive.setAttribute("TableLimits", JSON.stringify(limits));
-		this.data.results = RunResults.getFilteredSelectiveIdResults(IdsToDisplay, limits.start.value, length, limits.step.value);
 
-		let time_step_str = `${getTimeStep()}`;
-		let time_decimals = decimals_in_value_string(time_step_str);
+		let runBlocks = [];
+		for (let runName of runNames) {
+			if (!runName && (!RunResults.results || !RunResults.results.length)) continue;
+			let results = RunResults.getFilteredSelectiveIdResults(
+				IdsToDisplay, limits.start.value, length, limits.step.value, runName
+			);
+			if (!results || !results.length) continue;
+			let label = runName || getCurrentRunSourceName() || "Current";
+			runBlocks.push({ runName, label, results });
+		}
 
-		// We must get the data in column_index+1 since column 1 is reserved for time
+		let multiRun = runBlocks.length > 1 && IdsToDisplay.length > 0;
+		this.data.runNames = multiRun ? runBlocks.map(block => block.label) : [];
+		this.data.results = buildSideBySideRunTable(runBlocks, IdsToDisplay.length);
+
+		let steps = runNames
+			.map(name => Number(RunResults.getTimeStep(name)))
+			.filter(value => Number.isFinite(value) && value > 0);
+		let displayTimeStep = steps.length ? Math.min(...steps) : Number(getTimeStep());
+		let time_decimals = decimals_in_value_string(`${displayTimeStep}`);
+
 		let roundToZero = this.primitive.getAttribute("RoundToZero");
 		let round_to_zero_limit = -1;
 		if (roundToZero === "true") {
@@ -2416,36 +2509,57 @@ class TableVisual extends HtmlTwoPointer {
 			"decimals": number_length["usePrecision"] ? undefined : number_length["decimal"]
 		};
 
-		html = `<table class='sticky-table zebra-odd'>
-			<thead>
-				<tr>
-					<th class='time-header-cell'>
-						<div class="">Time</div>
-						<div class="time-unit">${getTimeUnits()}</div>
-					</th>
-					${this.data.namesToDisplay.map(name => {
-						const primitives = findName(name)
-						const primitive = Array.isArray(primitives) ? primitives.find(primitive => !isPrimitiveGhost(primitive)) : primitives
-						const color = primitive?.getAttribute("Color")
-						return `<th class="prim-header-cell">
-						<span class="cm-primitive cm-${color}">${name}</span>
-					</th>`}).join("")}
-				</tr>
-			</thead>
+		let units = runBlocks.length
+			? RunResults.getDataTimeUnits(runBlocks[0].runName)
+			: RunResults.getDataTimeUnits();
+		let variableHeaders = this.data.namesToDisplay.map(name => {
+			const primitives = findName(name);
+			const primitive = Array.isArray(primitives) ? primitives.find(primitive => !isPrimitiveGhost(primitive)) : primitives;
+			const color = primitive?.getAttribute("Color");
+			return `<th class="prim-header-cell"><span class="cm-primitive cm-${color}">${htmlEscape(name)}</span></th>`;
+		}).join("");
+
+		let headerHtml = "";
+		if (multiRun) {
+			let variableGroupHeaders = this.data.namesToDisplay.map(name => {
+				const primitives = findName(name);
+				const primitive = Array.isArray(primitives) ? primitives.find(primitive => !isPrimitiveGhost(primitive)) : primitives;
+				const color = primitive?.getAttribute("Color");
+				return `<th class='prim-header-cell' colspan='${runBlocks.length}'><span class="cm-primitive cm-${color}">${htmlEscape(name)}</span></th>`;
+			}).join("");
+			let runHeaders = this.data.namesToDisplay.map(() =>
+				runBlocks.map(block => `<th class='prim-header-cell'>${htmlEscape(block.label)}</th>`).join("")
+			).join("");
+			headerHtml = `<tr>
+				<th class='time-header-cell' rowspan='2'>
+					<div>Time</div>
+					<div class="time-unit">${htmlEscape(units)}</div>
+				</th>
+				${variableGroupHeaders}
+			</tr>
+			<tr>${runHeaders}</tr>`;
+		} else {
+			headerHtml = `<tr>
+				<th class='time-header-cell'>
+					<div>Time</div>
+					<div class="time-unit">${htmlEscape(units)}</div>
+				</th>
+				${variableHeaders}
+			</tr>`;
+		}
+
+		let html = `<table class='sticky-table zebra-odd${multiRun ? " systemika-multi-run-table" : ""}'>
+			<thead>${headerHtml}</thead>
 			<tbody>
-				${this.data.results.map((row) => `<tr>
-					${["Time"].concat(this.data.namesToDisplay).map((_, column_index) =>
-			column_index == 0
-				? `<td class="time-value-cell">${format_number(row[column_index], { round_to_zero_limit, decimals: time_decimals }
-				)}</td>`
-				: `<td class="prim-value-cell">${format_number(row[column_index], number_options)}</td>`
-		).join("")}
-				</tr>`).join("")}
+				${this.data.results.map((row) => {
+					return `<tr>
+						<td class="time-value-cell">${format_number(row[0], { round_to_zero_limit, decimals: time_decimals })}</td>
+						${row.slice(1).map(value => `<td class="prim-value-cell">${value == null ? "" : format_number(value, number_options)}</td>`).join("")}
+					</tr>`;
+				}).join("")}
 			</tbody>
 		</table>`;
-
 		if (this.data.results.length === 0) {
-			// show this when empty table
 			html += (`<div class="empty-plot-header">Table</div>`);
 		}
 		this.updateHTML(html);
@@ -2512,20 +2626,22 @@ class HtmlOverlayTwoPointer extends TwoPointer {
 	makeGraphics() {
 		this.targetBorder = 4;
 		this.targetElement = document.createElement("div");
+		this.targetElement.classList.add("canvas-scaled-html-overlay");
 		this.targetElement.style.position = "absolute";
+		this.targetElement.style.transformOrigin = "0 0";
 		this.targetElement.style.backgroundColor = "white";
 		this.targetElement.style.zIndex = 100;
 		this.targetElement.style.overflow = "hidden";
-		// The element is laid out (and its contents, e.g. a jqplot chart,
-		// rendered) at canvas-unit size; a transform stretches the whole
-		// thing to match the zoomed svg instead of relying on its content
-		// to re-render at a new pixel size on every zoom step.
-		this.targetElement.style.transformOrigin = "0 0";
-		this.targetElement.style.left = (this.getMinX() * Zoom.level + this.targetBorder + 1) + "px";
-		this.targetElement.style.top = (this.getMinY() * Zoom.level + this.targetBorder + 1) + "px";
+		let initialOverlayLeft = this.getMinX() + this.targetBorder + 1;
+		let initialOverlayTop = this.getMinY() + this.targetBorder + 1;
+		let initialZoomLevel = (typeof Zoom !== "undefined" && Number.isFinite(Zoom.level)) ? Zoom.level : 1;
+		this.targetElement.dataset.canvasLeft = String(initialOverlayLeft);
+		this.targetElement.dataset.canvasTop = String(initialOverlayTop);
+		this.targetElement.style.left = (initialOverlayLeft * initialZoomLevel) + "px";
+		this.targetElement.style.top = (initialOverlayTop * initialZoomLevel) + "px";
+		this.targetElement.style.transform = `scale(${initialZoomLevel})`;
 		this.targetElement.style.width = "2px";
 		this.targetElement.style.height = "2px";
-		this.targetElement.style.transform = `scale(${Zoom.level})`;
 		document.getElementById("svgplanebackground").appendChild(this.targetElement);
 
 		$(this.targetElement).mousedown((event) => {
@@ -2566,14 +2682,18 @@ class HtmlOverlayTwoPointer extends TwoPointer {
 		this.coordRect.y2 = this.endY;
 		this.coordRect.update();
 
-		this.targetElement.style.left = (this.getMinX() * Zoom.level + this.targetBorder + 1) + "px";
-		this.targetElement.style.top = (this.getMinY() * Zoom.level + this.targetBorder + 1) + "px";
-
-		// Unscaled (canvas-unit) size; the zoom transform below stretches it
-		// to the actual screen size, matching the svg frame.
-		this.targetElement.style.width = (this.getWidth() - (2 * this.targetBorder)) + "px";
-		this.targetElement.style.height = (this.getHeight() - (2 * this.targetBorder)) + "px";
-		this.targetElement.style.transform = `scale(${Zoom.level})`;
+		let overlayLeft = this.getMinX() + this.targetBorder + 1;
+		let overlayTop = this.getMinY() + this.targetBorder + 1;
+		let overlayWidth = this.getWidth() - (2 * this.targetBorder);
+		let overlayHeight = this.getHeight() - (2 * this.targetBorder);
+		this.targetElement.dataset.canvasLeft = String(overlayLeft);
+		this.targetElement.dataset.canvasTop = String(overlayTop);
+		this.targetElement.style.width = overlayWidth + "px";
+		this.targetElement.style.height = overlayHeight + "px";
+		let zoomLevel = (typeof Zoom !== "undefined" && Number.isFinite(Zoom.level)) ? Zoom.level : 1;
+		this.targetElement.style.left = (overlayLeft * zoomLevel) + "px";
+		this.targetElement.style.top = (overlayTop * zoomLevel) + "px";
+		this.targetElement.style.transform = `scale(${zoomLevel})`;
 	}
 
 	clean() {
@@ -2693,6 +2813,11 @@ class TimePlotVisual extends PlotVisual {
 		}
 	}
 	fetchData() {
+		let runName = getDisplayRunName(this.primitive);
+		if (!ensureDisplayRunAvailable(this.primitive, () => this.render())) {
+			this.data.results = [];
+			return false;
+		}
 		this.fetchedIds = getDisplayIds(this.primitive);
 
 		this.data.resultIds = ["time"].concat(this.fetchedIds);
@@ -2702,10 +2827,13 @@ class TimePlotVisual extends PlotVisual {
 			plot_per = this.dialog.getDefaultPlotPeriod();
 			this.primitive.setAttribute("PlotPer", plot_per);
 		}
-		this.data.results = RunResults.getFilteredSelectiveIdResults(this.fetchedIds, getTimeStart(), getTimeLength(), plot_per);
+		this.data.results = RunResults.getFilteredSelectiveIdResults(this.fetchedIds, RunResults.getDataTimeStart(runName), RunResults.getDataTimeLength(runName), plot_per, runName);
 	}
 	render() {
-		this.fetchData();
+		if (this.fetchData() === false) {
+			this.setEmptyPlot();
+			return;
+		}
 
 		let idsToDisplay = getDisplayIds(this.primitive);
 		let sides = getDisplaySides(this.primitive);
@@ -2805,8 +2933,9 @@ class TimePlotVisual extends PlotVisual {
 		$(this.chartDiv).empty();
 
 		let axisLimits = JSON.parse(this.primitive.getAttribute("AxisLimits"));
-		let min = Number(axisLimits.timeaxis.auto ? getTimeStart() : axisLimits.timeaxis.min);
-		let max = Number(axisLimits.timeaxis.auto ? getTimeStart() + getTimeLength() : axisLimits.timeaxis.max);
+		let runName = getDisplayRunName(this.primitive);
+		let min = Number(axisLimits.timeaxis.auto ? RunResults.getDataTimeStart(runName) : axisLimits.timeaxis.min);
+		let max = Number(axisLimits.timeaxis.auto ? RunResults.getDataTimeStart(runName) + RunResults.getDataTimeLength(runName) : axisLimits.timeaxis.max);
 		let tickList = this.getTicks(min, max);
 
 		$.jqplot.config.enablePlugins = true;
@@ -2820,7 +2949,7 @@ class TimePlotVisual extends PlotVisual {
 			axes: {
 				xaxis: {
 					labelRenderer: $.jqplot.CanvasAxisLabelRenderer,
-					label: "Time",
+					label: timeAxisLabel(),
 					min: min,
 					max: max,
 					ticks: tickList
@@ -2941,14 +3070,15 @@ class DataGenerations {
 			this.resultGen.splice(genIndex, 1)
 		}
 	}
-	append(ids, results, lineOptions) {
-		if (!RunResults.simulationDone || results.length == 0) return;
+	append(ids, results, lineOptions, runLabel, allowStoredRun) {
+		if ((!RunResults.simulationDone && !allowStoredRun) || results.length == 0) return;
 		this.resultGen.push(results);
 		this.numGenerations++;
 		this.numLines += ids.length;
 		this.idGen.push(ids);
 		let suffixPrim = findID(this.labelSuffixId)
 		let suffix = suffixPrim ? `, ${getName(suffixPrim)} = ${getValue(suffixPrim)}` : ""
+		if (runLabel) suffix += `, Run = ${runLabel}`;
 		this.labelGen.push(ids.map(findID).map(p => getName(p) + suffix));
 		this.isRandom.push(ids.map(findID).map(p => hasRandomFunction(getValue(p))));
 		this.nameGen.push(ids.map(findID).map(getName));
@@ -3123,45 +3253,94 @@ class ComparePlotVisual extends PlotVisual {
 	gens;
 	constructor(id, type, pos0, pos1) {
 		super(id, type, pos0, pos1);
+		this.runSourceRequest = 0;
 		this.runHandler = () => {
-			this.fetchData();
-			this.render();
+			// A newly completed normal simulation must immediately refresh every
+			// Compare Plot that includes Current/latest. Saved-only comparisons are
+			// stable, but rebuilding them is harmless and keeps overwritten runs in
+			// sync with the in-memory cache.
+			this.refreshRunSources();
 		}
 		RunResults.subscribeRun(id, this.runHandler);
 		this.plot = null;
 		this.serieArray = null;
 		this.gens = new DataGenerations();
+		initializeMultiRunSelection(this.primitive);
 
 		this.dialog = new ComparePlotDialog(id);
 		this.dialog.subscribePool.subscribe(() => {
-			this.render();
+			this.refreshRunSources();
 		});
+
+		// A Compare Plot can be created after a simulation has already finished.
+		// It therefore cannot rely solely on the run-finished subscription event.
+		// Populate it from the already available Current/latest dataset now.
+		setTimeout(() => this.refreshRunSources(), 0);
 	}
 	removePlotReference(removeId) {
 		let result = removeDisplayId(this.primitive, removeId);
-		if (result) {
-			this.render();
-		}
+		if (result) this.refreshRunSources();
 	}
 	clearGenerations() {
 		this.gens.reset();
+		this.render();
 	}
 	fetchData() {
-		this.fetchedIds = getDisplayIds(this.primitive);
+		this.refreshRunSources();
+		return true;
+	}
+	async refreshRunSources() {
+		let request = ++this.runSourceRequest;
+		let runNames = getCompareRunNames(this.primitive);
+		let savedNames = runNames.filter(Boolean);
 
-		let auto_plot_per = JSON.parse(this.primitive.getAttribute("AutoPlotPer"));
-		let plot_per = Number(this.primitive.getAttribute("PlotPer"));
-		if (auto_plot_per && plot_per !== this.dialog.getDefaultPlotPeriod()) {
-			plot_per = this.dialog.getDefaultPlotPeriod();
-			this.primitive.setAttribute("PlotPer", plot_per);
+		try {
+			if (window.systemikaSimulationData && systemikaSimulationData.persistenceAvailable()) {
+				await Promise.all(savedNames.map(name => systemikaSimulationData.ensureRunLoaded(name)));
+			}
+		} catch (error) {
+			if (request !== this.runSourceRequest) return;
+			console.error(error);
+			xAlert(`Unable to load Time Plot run data.<br/><br/>${htmlEscape(error.message || String(error))}`);
+			return;
 		}
-		let results = RunResults.getFilteredSelectiveIdResults(this.fetchedIds, getTimeStart(), getTimeLength(), plot_per);
-		let line_options = JSON.parse(this.primitive.getAttribute("LineOptions"));
-		// add generation
-		this.gens.append(getDisplayIds(this.primitive), results, line_options);
+		if (request !== this.runSourceRequest) return;
+
+		this.fetchedIds = getDisplayIds(this.primitive);
+		let autoPlotPer = JSON.parse(this.primitive.getAttribute("AutoPlotPer"));
+		let plotPer = Number(this.primitive.getAttribute("PlotPer"));
+		if (autoPlotPer) {
+			let steps = runNames
+				.map(name => Number(RunResults.getTimeStep(name)))
+				.filter(value => Number.isFinite(value) && value > 0);
+			let defaultPlotPer = steps.length ? Math.min(...steps) : Number(this.dialog.getDefaultPlotPeriod());
+			if (Number.isFinite(defaultPlotPer) && defaultPlotPer > 0 && plotPer !== defaultPlotPer) {
+				plotPer = defaultPlotPer;
+				this.primitive.setAttribute("PlotPer", plotPer);
+			}
+		}
+
+		let lineOptions = JSON.parse(this.primitive.getAttribute("LineOptions"));
+		this.gens.reset();
+		for (let runName of runNames) {
+			// The unnamed source is the live/current run. During Advance it is
+			// intentionally available before simulationDone so plots refresh after
+			// every step rather than waiting for the model end time.
+			if (!runName && (!RunResults.results || !RunResults.results.length)) continue;
+			let start = RunResults.getDataTimeStart(runName);
+			let length = RunResults.getDataTimeLength(runName);
+			let results = RunResults.getFilteredSelectiveIdResults(this.fetchedIds, start, length, plotPer, runName);
+			if (!results || !results.length) continue;
+			let label = runName;
+			if (!label) {
+				let current = window.systemikaSimulationData ? systemikaSimulationData.getCurrentRun() : null;
+				label = current && current.runName ? `${current.runName} (current)` : "Current";
+			}
+			this.gens.append(this.fetchedIds, results, lineOptions, label, true);
+		}
+		this.render();
 	}
 	render() {
-
 		let idsToDisplay = getDisplayIds(this.primitive);
 		this.primitive.setAttribute("Primitives", idsToDisplay.join(","));
 
@@ -3170,55 +3349,39 @@ class ComparePlotVisual extends PlotVisual {
 			return;
 		}
 
-		// Declare series and settings for series
 		this.serieSettingsArray = [];
 		this.serieArray = [];
-
 		let hasNumberedLines = this.primitive.getAttribute("HasNumberedLines") === "true";
-
-		// Make time series
 		this.serieArray = this.gens.getSeriesArray(idsToDisplay, hasNumberedLines);
-
-		do_global_log("serieArray " + JSON.stringify(this.serieArray));
-
-		// Make serie settings
 		this.serieSettingsArray = this.gens.getSeriesSettingsArray(
 			idsToDisplay,
 			hasNumberedLines,
 			this.primitive.getAttribute("ColorFromPrimitive") === "true"
 		);
-
-		do_global_log(JSON.stringify(this.serieSettingsArray));
-
-		// We need to ad a delay and respond to events first to make this work in firefox
 		setTimeout(() => this.updateChart(), 200);
 	}
 	updateChart() {
-		// Dont update chart if primitive has been deleted
-		// This check needs to be here since updateChart is updated with a timeout
 		if (!(this.id in connection_array)) return;
-
 		if (this.serieArray == null || this.serieArray.length == 0 || this.serieArray[0].length === 0) {
-			// The series are not initialized yet
 			this.setEmptyPlot();
 			return;
 		}
 		$(this.chartDiv).empty();
 		let axisLimits = JSON.parse(this.primitive.getAttribute("AxisLimits"));
-		let min = Number(axisLimits.timeaxis.auto ? getTimeStart() : axisLimits.timeaxis.min);
-		let max = Number(axisLimits.timeaxis.auto ? getTimeStart() + getTimeLength() : axisLimits.timeaxis.max);
+		let bounds = getCompareRunBounds(this.primitive);
+		let fallbackStart = RunResults.getDataTimeStart();
+		let fallbackEnd = fallbackStart + RunResults.getDataTimeLength();
+		let min = Number(axisLimits.timeaxis.auto ? (bounds ? bounds.min : fallbackStart) : axisLimits.timeaxis.min);
+		let max = Number(axisLimits.timeaxis.auto ? (bounds ? bounds.max : fallbackEnd) : axisLimits.timeaxis.max);
 		let tickList = this.getTicks(min, max);
 
 		this.plot = $.jqplot(this.chartId, this.serieArray, {
 			title: this.primitive.getAttribute("TitleLabel"),
 			series: this.serieSettingsArray,
-			grid: {
-				background: "transparent",
-				shadow: false
-			},
+			grid: { background: "transparent", shadow: false },
 			axes: {
 				xaxis: {
-					label: "Time",
+					label: timeAxisLabel(),
 					labelRenderer: $.jqplot.CanvasAxisLabelRenderer,
 					min: min,
 					max: max,
@@ -3241,10 +3404,7 @@ class ComparePlotVisual extends PlotVisual {
 				formatString: "Time = %.5p<br/>Value = %.5p",
 				useAxesFormatters: false
 			},
-			legend: {
-				show: true,
-				placement: 'outsideGrid'
-			}
+			legend: { show: true, placement: 'outsideGrid' }
 		});
 		if (!isNaN(this.plot.axes.yaxis.min) && !isNaN(this.plot.axes.yaxis.max)) {
 			axisLimits.yaxis.min = this.plot.axes.yaxis.min;
@@ -3262,7 +3422,7 @@ class ComparePlotVisual extends PlotVisual {
 			</ul>`);
 		}
 		this.chartDiv.innerHTML = (`
-			<div class="empty-plot-header">Compare Simulations Plot</div>
+			<div class="empty-plot-header">Time Plot</div>
 			${selected_str}
 		`);
 	}
@@ -3360,6 +3520,9 @@ class HistoPlotVisual extends PlotVisual {
 		}
 		RunResults.subscribeRun(id, this.runHandler);
 		this.plot = null;
+		this.histograms = [];
+		this.runLabels = [];
+		initializeMultiRunSelection(this.primitive);
 
 		this.dialog = new HistoPlotDialog(id);
 		this.dialog.subscribePool.subscribe(() => {
@@ -3367,34 +3530,57 @@ class HistoPlotVisual extends PlotVisual {
 		});
 	}
 
-	calcHistogram(results) {
-		let histogram = {};
-		histogram.data = results.map(row => Number(row[1]));
+	getHistogramSettings(dataSets) {
+		let allData = [];
+		for (let data of dataSets) allData.push(...data);
+		if (!allData.length) return null;
 
+		let min;
+		let max;
 		if (this.primitive.getAttribute("LowerBoundAuto") === "true") {
-			histogram.min = Math.min.apply(null, histogram.data);
-			this.primitive.setAttribute("LowerBound", histogram.min);
+			min = Math.min.apply(null, allData);
+			this.primitive.setAttribute("LowerBound", min);
 		} else {
-			histogram.min = Number(this.primitive.getAttribute("LowerBound"));
+			min = Number(this.primitive.getAttribute("LowerBound"));
 		}
 		if (this.primitive.getAttribute("UpperBoundAuto") === "true") {
-			histogram.max = Math.max.apply(null, histogram.data);
-			// This line is to slightly elevate the upper limit so the top most value is included.
-			// histogram.max += (histogram.max-histogram.min)*0.0001;
-			this.primitive.setAttribute("UpperBound", histogram.max);
+			max = Math.max.apply(null, allData);
+			this.primitive.setAttribute("UpperBound", max);
 		} else {
-			histogram.max = Number(this.primitive.getAttribute("UpperBound"));
-		}
-		if (this.primitive.getAttribute("NumberOfBarsAuto") === "true") {
-			histogram.numBars = Number(getDefaultAttributeValue("histoplot", "NumberOfBars"));
-			this.primitive.setAttribute("NumberOfBars", histogram.numBars);
-		} else {
-			histogram.numBars = this.primitive.getAttribute("NumberOfBars");
+			max = Number(this.primitive.getAttribute("UpperBound"));
 		}
 
+		if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+		// A constant series still needs a non-zero bin width. Expand the automatic
+		// range symmetrically without changing the data itself.
+		if (max <= min) {
+			let padding = Math.max(Math.abs(min) * 0.05, 0.5);
+			min -= padding;
+			max += padding;
+			if (this.primitive.getAttribute("LowerBoundAuto") === "true") this.primitive.setAttribute("LowerBound", min);
+			if (this.primitive.getAttribute("UpperBoundAuto") === "true") this.primitive.setAttribute("UpperBound", max);
+		}
+
+		let numBars;
+		if (this.primitive.getAttribute("NumberOfBarsAuto") === "true") {
+			numBars = Number(getDefaultAttributeValue("histoplot", "NumberOfBars"));
+			this.primitive.setAttribute("NumberOfBars", numBars);
+		} else {
+			numBars = Number(this.primitive.getAttribute("NumberOfBars"));
+		}
+		if (!Number.isFinite(numBars) || numBars < 1) numBars = 10;
+		numBars = Math.max(1, Math.round(numBars));
+		return { min, max, numBars };
+	}
+
+	calcHistogram(results, settings) {
+		let histogram = {};
+		histogram.data = results.map(row => Number(row[1])).filter(Number.isFinite);
+		histogram.min = settings.min;
+		histogram.max = settings.max;
+		histogram.numBars = settings.numBars;
 		histogram.intervalWidth = (histogram.max - histogram.min) / histogram.numBars;
 		histogram.bars = [];
-		// Data points below resp. below the lower and upper boundary
 		histogram.below_data = [];
 		histogram.above_data = [];
 
@@ -3407,9 +3593,11 @@ class HistoPlotVisual extends PlotVisual {
 		}
 		for (let dataPoint of histogram.data) {
 			let pos = Math.floor((dataPoint - histogram.min) / histogram.intervalWidth);
+			// Include an observation exactly equal to the upper bound in the final bin.
+			if (dataPoint === histogram.max) pos = histogram.numBars - 1;
 			if (0 <= pos && pos < histogram.numBars) {
 				histogram.bars[pos].data.push(dataPoint);
-			} else if (pos < 0) {
+			} else if (dataPoint < histogram.min) {
 				histogram.below_data.push(dataPoint);
 			} else {
 				histogram.above_data.push(dataPoint);
@@ -3418,86 +3606,136 @@ class HistoPlotVisual extends PlotVisual {
 		return histogram;
 	}
 
+	getRunLabel(runName) {
+		if (runName) return runName;
+		let current = window.systemikaSimulationData ? systemikaSimulationData.getCurrentRun() : null;
+		return current && current.runName ? `${current.runName} (current)` : "Current";
+	}
+
 	render() {
+		if (!ensureDisplayRunsAvailable(this.primitive, () => this.render())) {
+			this.setEmptyPlot();
+			return;
+		}
 		let idsToDisplay = getDisplayIds(this.primitive);
 		this.primitive.setAttribute("Primitives", idsToDisplay.join(","));
 		if (idsToDisplay.length !== 1) {
 			this.setEmptyPlot();
 			return;
 		}
-		let results = RunResults.getSelectiveIdResults(idsToDisplay);
 
-		if (results.length === 0) {
+		let runNames = getCompareRunNames(this.primitive);
+		if (!runNames.length) runNames = [""];
+		let runResults = [];
+		for (let runName of runNames) {
+			let results = RunResults.getSelectiveIdResults(idsToDisplay, runName);
+			// A single current run can be represented in the display selection by its
+			// user-facing label (for example "Base") even while the authoritative
+			// data source is still the live/current run. Fall back to that live source
+			// when the labels match so a one-run histogram never renders empty.
+			if ((!results || !results.length) && runName && runName === getCurrentRunSourceName() && hasCurrentRunSource()) {
+				results = RunResults.getSelectiveIdResults(idsToDisplay, "");
+			}
+			if (!results || !results.length) continue;
+			runResults.push({ runName, label: this.getRunLabel(runName), results });
+		}
+		// Defensive fallback: if the comparison selection is temporarily empty or
+		// stale but a current run exists, display that run rather than a blank chart.
+		if (!runResults.length && hasCurrentRunSource()) {
+			let results = RunResults.getSelectiveIdResults(idsToDisplay, "");
+			if (results && results.length) {
+				runResults.push({ runName: "", label: this.getRunLabel(""), results });
+			}
+		}
+		if (!runResults.length) {
+			this.setEmptyPlot();
+			return;
+		}
+
+		let dataSets = runResults.map(item => item.results.map(row => Number(row[1])).filter(Number.isFinite));
+		let settings = this.getHistogramSettings(dataSets);
+		if (!settings) {
 			this.setEmptyPlot();
 			return;
 		}
 
 		this.serieArray = [];
-		this.labels = [];
-		this.ticks = [];
-
-		// Declare series and settings for series
 		this.serieSettingsArray = [];
+		this.histograms = [];
+		this.runLabels = [];
+		this.ticks = [];
+		let usePDF = (this.primitive.getAttribute("ScaleType") === "PDF");
+		let tickDecimal = Number.isInteger((settings.max - settings.min) / settings.numBars) ? 0 : 2;
+		let multipleRuns = runResults.length > 1;
 
-		this.histogram = this.calcHistogram(results);
-		let tickDecimal = Number.isInteger(this.histogram.intervalWidth) ? 0 : 2;
-
-		let serie = [];
-		for (let i = 0; i < this.histogram.bars.length; i++) {
-			let bar = this.histogram.bars[i];
-			let barValue = bar.data.length;
-			let usePDF = (this.primitive.getAttribute("ScaleType") === "PDF");
-			if (usePDF) {
-				barValue = bar.data.length / this.histogram.data.length;
+		for (let runIndex = 0; runIndex < runResults.length; runIndex++) {
+			let item = runResults[runIndex];
+			let histogram = this.calcHistogram(item.results, settings);
+			this.histograms.push(histogram);
+			this.runLabels.push(item.label);
+			let labels = [];
+			let serie = [];
+			for (let i = 0; i < histogram.bars.length; i++) {
+				let bar = histogram.bars[i];
+				let barValue = usePDF
+					? (histogram.data.length ? bar.data.length / histogram.data.length : 0)
+					: bar.data.length;
+				serie.push([bar.lowerLimit, barValue]);
+				labels.push("");
+				serie.push([(bar.lowerLimit + bar.upperLimit) / 2, barValue]);
+				labels.push(usePDF ? barValue.toFixed(3) : barValue.toString());
+				serie.push([bar.upperLimit, barValue]);
+				labels.push("");
 			}
-			//		1___2___3		  ______
-			// _____|		|1___2___3		...
-
-			// (1)
-			serie.push([bar.lowerLimit, barValue]);
-			this.labels.push("");
-			this.ticks.push(bar.lowerLimit.toFixed(tickDecimal));
-
-			// (2) label here
-			serie.push([(bar.lowerLimit + bar.upperLimit) / 2, barValue]);
-			this.labels.push(usePDF ? barValue.toFixed(3) : barValue.toString());
-
-			// (3)
-			serie.push([bar.upperLimit, barValue]);
-			this.labels.push("");
+			serie.push([histogram.max, 0]);
+			labels.push("");
+			this.serieArray.push(serie);
+			// Keep the original proven jqPlot configuration for a single histogram.
+			// Comparative histograms need a few extra line/fill settings for overlays,
+			// but applying those settings to the one-series path caused jqPlot 1.0.8
+			// to render an empty chart on some launches.
+			let seriesSettings;
+			if (multipleRuns) {
+				seriesSettings = {
+					label: item.label,
+					shadow: false,
+					lineWidth: 2,
+					fillAndStroke: true,
+					showMarker: false,
+					fillAlpha: 0.32,
+					pointLabels: { show: false, labels: labels }
+				};
+			} else {
+				seriesSettings = {
+					// Single-run histograms use a neutral classroom/print-friendly style.
+					// Keep the fill light while preserving a clear black bin outline.
+					color: "#000000",
+					fillColor: "#d9d9d9",
+					lineWidth: 1.5,
+					shadow: false,
+					showMarker: false,
+					pointLabels: {
+						show: true,
+						labels: labels
+					}
+				};
+			}
+			this.serieSettingsArray.push(seriesSettings);
 		}
 
-		serie.push([this.histogram.max, 0]);
-		this.labels.push("");
-		this.ticks.push(this.histogram.max.toFixed(tickDecimal));
+		for (let i = 0; i < settings.numBars; i++) {
+			this.ticks.push((settings.min + i * ((settings.max - settings.min) / settings.numBars)).toFixed(tickDecimal));
+		}
+		this.ticks.push(settings.max.toFixed(tickDecimal));
 
-		this.serieArray.push(serie);
-		let targetPrim = findID(idsToDisplay[0]);
-
-		// Make serie settings
-		this.serieSettingsArray.push(
-			{
-				color: targetPrim.getAttribute("Color"),
-				shadow: false,
-				pointLabels: {
-					show: true,
-					labels: this.labels
-				}
-			}
-		);
-
-		// We need to ad a delay and respond to events first to make this work in firefox
 		setTimeout(() => {
 			this.updateChart();
 		}, 200);
 	}
-	updateChart() {
-		// Dont update chart if primitive has been deleted
-		// This check needs to be here since updateChart is updated with a timeout
-		if (!(this.id in connection_array)) return;
 
-		if (this.serieArray == null) {
-			// The series are not initialized yet
+	updateChart() {
+		if (!(this.id in connection_array)) return;
+		if (!this.serieArray || !this.serieArray.length || !this.histograms.length) {
 			this.setEmptyPlot();
 			return;
 		}
@@ -3507,20 +3745,19 @@ class HistoPlotVisual extends PlotVisual {
 		}
 		$(this.chartDiv).empty();
 
+		let histogram = this.histograms[0];
 		let width = parseInt(this.chartDiv.style.width);
-		let widthPerTick = width / this.histogram.numBars;
-
+		let widthPerTick = width / histogram.numBars;
 		let tempTick = this.ticks;
-		let minTickWidth = Number.isInteger(this.histogram.intervalWidth) ? 30 : 40;
+		let minTickWidth = Number.isInteger(histogram.intervalWidth) ? 30 : 40;
 		if (widthPerTick < minTickWidth) {
 			let tickIndexSkip = Math.ceil(minTickWidth / widthPerTick);
 			tempTick = this.ticks.filter((_, index) => index % tickIndexSkip === 0 || index === this.ticks.length - 1);
 		}
 
-
-
 		let scaleType = this.primitive.getAttribute("ScaleType");
 		let targetPrimName = `${getName(findID(getDisplayIds(this.primitive)[0]))}`;
+		let multipleRuns = this.serieArray.length > 1;
 
 		$.jqplot.config.enablePlugins = true;
 		this.plot = $.jqplot(this.chartId, this.serieArray, {
@@ -3531,19 +3768,22 @@ class HistoPlotVisual extends PlotVisual {
 				background: "transparent",
 				shadow: false
 			},
-			seriesDefaults: {
+			seriesDefaults: multipleRuns ? {
 				step: true,
-				fill: true
+				fill: true,
+				fillAndStroke: true,
+				showMarker: false
+			} : {
+				// This mirrors the pre-comparison (0.9.3) histogram renderer, which is
+				// known to render one run reliably. showMarker=false is the only visual
+				// change, removing the three marker dots per bar.
+				step: true,
+				fill: true,
+				showMarker: false
 			},
 			axes: {
 				xaxis: {
-					tickOptions: {
-						// alternative way of showing ticks, will be displayed as: <value≤
-						// Tick placement can not be choosen with this method
-						// axes.xaxis.ticks attribute must be removed for this
-						// formatString: '<%5p≤'
-					},
-					label: "&nbsp;", // make sure there is space for below/above labels
+					label: "&nbsp;",
 					pad: 0,
 					ticks: tempTick
 				},
@@ -3553,20 +3793,53 @@ class HistoPlotVisual extends PlotVisual {
 			},
 			highlighter: {
 				show: false
+			},
+			legend: multipleRuns ? {
+				show: true,
+				placement: "outsideGrid"
+			} : {
+				show: false
 			}
 		});
 
+		// Keep single-run histograms visually neutral and print-friendly without
+		// re-enabling jqPlot's fragile one-series fillAndStroke path. jqPlot fills
+		// the bars light gray above; draw crisp black bin borders directly on the
+		// series canvas after the plot has been constructed.
+		if (!multipleRuns && this.plot && this.plot.series && this.plot.series[0]) {
+			let ctx = this.plot.series[0].canvas && this.plot.series[0].canvas._ctx;
+			let xAxis = this.plot.axes && this.plot.axes.xaxis;
+			let yAxis = this.plot.axes && this.plot.axes.yaxis;
+			if (ctx && xAxis && yAxis) {
+				let usePDF = (scaleType === "PDF");
+				let yBase = yAxis.series_u2p(0);
+				ctx.save();
+				ctx.strokeStyle = "#000000";
+				ctx.lineWidth = 1;
+				for (let bar of histogram.bars) {
+					let barValue = usePDF
+						? (histogram.data.length ? bar.data.length / histogram.data.length : 0)
+						: bar.data.length;
+					if (barValue <= 0) continue;
+					let x1 = xAxis.series_u2p(bar.lowerLimit);
+					let x2 = xAxis.series_u2p(bar.upperLimit);
+					let yTop = yAxis.series_u2p(barValue);
+					ctx.strokeRect(x1, yTop, x2 - x1, yBase - yTop);
+				}
+				ctx.restore();
+			}
+		}
+
+		let belowLines = [];
+		let aboveLines = [];
+		for (let i = 0; i < this.histograms.length; i++) {
+			let label = this.runLabels[i] || `Run ${i + 1}`;
+			belowLines.push(`${htmlEscape(label)}: ${this.histograms[i].below_data.length}`);
+			aboveLines.push(`${htmlEscape(label)}: ${this.histograms[i].above_data.length}`);
+		}
 		let outsideLimitInfoID = [`${getID(this.primitive)}_histoBelow`, `${getID(this.primitive)}_histoAbove`];
-		$(this.chartDiv).append(`
-				<div id="${outsideLimitInfoID[0]}">
-					${this.histogram.below_data.length} values &lt; ${Number(this.primitive.getAttribute("LowerBound")).toFixed(2)}
-				</div>
-		`);
-		$(this.chartDiv).append(`
-				<div id="${outsideLimitInfoID[1]}">
-					${this.histogram.above_data.length} values &geq; ${Number(this.primitive.getAttribute("UpperBound")).toFixed(2)}
-				</div>
-		`);
+		$(this.chartDiv).append(`<div id="${outsideLimitInfoID[0]}">${multipleRuns ? "Below bound<br/>" + belowLines.join("<br/>") : `${histogram.below_data.length} values &lt; ${Number(this.primitive.getAttribute("LowerBound")).toFixed(2)}`}</div>`);
+		$(this.chartDiv).append(`<div id="${outsideLimitInfoID[1]}">${multipleRuns ? "Above bound<br/>" + aboveLines.join("<br/>") : `${histogram.above_data.length} values &geq; ${Number(this.primitive.getAttribute("UpperBound")).toFixed(2)}`}</div>`);
 		$(`#${outsideLimitInfoID[0]}`).css("left", "8px");
 		$(`#${outsideLimitInfoID[1]}`).css("right", "8px");
 		for (let i in outsideLimitInfoID) {
@@ -3574,9 +3847,8 @@ class HistoPlotVisual extends PlotVisual {
 			$(`#${outsideLimitInfoID[i]}`).css("position", "absolute");
 			$(`#${outsideLimitInfoID[i]}`).css("padding", "4px 8px");
 			$(`#${outsideLimitInfoID[i]}`).css("bottom", "0px");
-			$(`#${outsideLimitInfoID[i]}`).css("background", "#f0f0f0");
-			// $(`#${outsideLimitInfoID[i]}`).css("border", "1px solid gray");
-			$(`#${outsideLimitInfoID[i]}`).css("font-size", "0.8em");
+			$(`#${outsideLimitInfoID[i]}`).css("background", "rgba(240,240,240,0.88)");
+			$(`#${outsideLimitInfoID[i]}`).css("font-size", multipleRuns ? "11px" : "inherit");
 		}
 	}
 	setEmptyPlot() {
@@ -3589,7 +3861,7 @@ class HistoPlotVisual extends PlotVisual {
 			</ul>`);
 		}
 		if (idsToDisplay.length > 1) {
-			selected_str += warningHtml("<br/>Exactly one primitive must be selected", false);
+			selected_str += warningHtml("<br/>Exactly one model entity must be selected", false);
 		}
 		this.chartDiv.innerHTML = (`
 			<div class="empty-plot-header">Histogram Plot</div>
@@ -3598,152 +3870,163 @@ class HistoPlotVisual extends PlotVisual {
 	}
 }
 
+// Resolve a run into finite XY points. The filtered path is preferred, but
+// saved/stepped runs can have metadata bounds that do not exactly match their
+// available rows. Falling back to the actual rows keeps a valid single-run XY
+// plot visible instead of treating it as empty.
+function getXyRunSeries(idsToDisplay, runName, plotPer) {
+	let start = RunResults.getDataTimeStart(runName);
+	let length = RunResults.getDataTimeLength(runName);
+	let allResults = RunResults.getSelectiveIdResults(idsToDisplay, runName) || [];
+	let filtered = RunResults.getFilteredSelectiveIdResults(idsToDisplay, start, length, plotPer, runName) || [];
+	let rows = filtered.length ? filtered : allResults;
+	let toPoints = values => values
+		.map(row => [Number(row[1]), Number(row[2]), Number(row[0])])
+		.filter(point => Number.isFinite(point[0]) && Number.isFinite(point[1]) && Number.isFinite(point[2]));
+	let points = toPoints(rows);
+	if (!points.length && rows !== allResults) points = toPoints(allResults);
+	return points;
+}
+
 class XyPlotVisual extends PlotVisual {
 	constructor(id, type, pos0, pos1) {
 		super(id, type, pos0, pos1);
-		this.runHandler = () => {
-			this.render();
-		}
+		this.runHandler = () => this.render();
 		RunResults.subscribeRun(id, this.runHandler);
 		this.plot = null;
 		this.serieArray = null;
+		this.serieSettingsArray = [];
 		this.namesToDisplay = [];
+		this.mainRunSeriesCount = 0;
 
 		this.xAxisColor = defaultStroke;
 		this.yAxisColor = defaultStroke;
-
 		this.minXValue = 0;
 		this.maxXValue = 0;
-
 		this.minYValue = 0;
 		this.maxYValue = 0;
 
+		initializeMultiRunSelection(this.primitive);
 		this.dialog = new XyPlotDialog(id);
-		this.dialog.subscribePool.subscribe(() => {
-			this.render();
-		});
+		this.dialog.subscribePool.subscribe(() => this.render());
+		setTimeout(() => this.render(), 0);
 	}
 	removePlotReference(removeId) {
 		let result = removeDisplayId(this.primitive, removeId);
-		if (result) {
-			this.render();
-		}
+		if (result) this.render();
 	}
 	render() {
-		let IdsToDisplay = getDisplayIds(this.primitive);
-		this.primitive.setAttribute("Primitives", IdsToDisplay.join(","));
-		this.namesToDisplay = IdsToDisplay.map(findID).map(getName);
-		let auto_plot_per = JSON.parse(this.primitive.getAttribute("AutoPlotPer"));
-		let plot_per = Number(this.primitive.getAttribute("PlotPer"));
-		if (auto_plot_per && plot_per !== this.dialog.getDefaultPlotPeriod()) {
-			plot_per = this.dialog.getDefaultPlotPeriod();
-			this.primitive.setAttribute("PlotPer", plot_per);
-		}
-		let results = RunResults.getFilteredSelectiveIdResults(IdsToDisplay, getTimeStart(), getTimeLength(), plot_per);
-		if (results.length == 0) {
+		let runNames = getCompareRunNames(this.primitive);
+		if (!ensureDisplayRunsAvailable(this.primitive, () => this.render())) {
 			this.setEmptyPlot();
 			return;
 		}
 
-		this.minXValue = 0;
-		this.maxXValue = 0;
-
-		this.minYValue = 0;
-		this.maxYValue = 0;
-
-		this.serieXName = "X series";
-		this.serieYName = "Y series";
-
-		if (IdsToDisplay.length != 2) {
-			// We have no series to display
+		let idsToDisplay = getDisplayIds(this.primitive);
+		this.primitive.setAttribute("Primitives", idsToDisplay.join(","));
+		this.namesToDisplay = idsToDisplay.map(findID).map(getName);
+		if (idsToDisplay.length !== 2) {
 			this.setEmptyPlot();
 			return;
 		}
 
-		let makeXYSerie = () => {
-			let serie = [];
-			this.serieXName = this.namesToDisplay[0];
-			this.serieYName = this.namesToDisplay[1];
-
-			for (let row of results) {
-				let x = Number(row[1]);
-				let y = Number(row[2]);
-				let t = Number(row[0]);
-				if (x < this.minXValue) {
-					this.minXValue = x;
-				}
-				if (x > this.maxXValue) {
-					this.maxXValue = x;
-				}
-				if (y < this.minValue) {
-					this.minYValue = y;
-				}
-				if (y > this.maxYValue) {
-					this.maxYValue = y;
-				}
-				serie.push([x, y, t]);
+		let autoPlotPer = JSON.parse(this.primitive.getAttribute("AutoPlotPer"));
+		let plotPer = Number(this.primitive.getAttribute("PlotPer"));
+		if (autoPlotPer) {
+			let steps = runNames
+				.map(name => Number(RunResults.getTimeStep(name)))
+				.filter(value => Number.isFinite(value) && value > 0);
+			let defaultPlotPer = steps.length ? Math.min(...steps) : Number(this.dialog.getDefaultPlotPeriod());
+			if (Number.isFinite(defaultPlotPer) && defaultPlotPer > 0 && plotPer !== defaultPlotPer) {
+				plotPer = defaultPlotPer;
+				this.primitive.setAttribute("PlotPer", plotPer);
 			}
-			return serie;
 		}
 
-		// Declare series and settings for series
-		this.serieSettingsArray = [];
+		this.serieXName = this.namesToDisplay[0];
+		this.serieYName = this.namesToDisplay[1];
 		this.serieArray = [];
+		this.serieSettingsArray = [];
+		this.mainRunSeriesCount = 0;
+		let markerSeries = [];
 
-		// Make time series
-		let dataSerie = makeXYSerie();
-		this.serieArray.push(dataSerie);
-		do_global_log("serieArray " + JSON.stringify(this.serieArray));
+		this.singleRunMode = runNames.length === 1;
+		for (let runName of runNames) {
+			let dataSerie = getXyRunSeries(idsToDisplay, runName, plotPer);
+			if (!dataSerie.length) continue;
 
-		// Make serie settings
-		this.serieSettingsArray.push({
-			lineWidth: this.primitive.getAttribute("LineWidth"),
-			color: "black",
-			shadow: false,
-			showLine: this.primitive.getAttribute("ShowLine") === "true",
-			showMarker: this.primitive.getAttribute("ShowMarker") === "true",
-			markerOptions: { shadow: false, size: 5 },
-			pointLabels: { show: false }
-		});
-		if (this.primitive.getAttribute("MarkStart") === "true") {
-			this.serieArray.push([dataSerie[0]]);
-			this.serieSettingsArray.push({
-				color: "#ff4444",
-				showLine: false,
-				showMarker: true,
-				markerOptions: { shadow: false },
+			let label = runName || getCurrentRunSourceName() || "Current";
+			let showLine = this.primitive.getAttribute("ShowLine") === "true";
+			let showMarker = this.primitive.getAttribute("ShowMarker") === "true";
+			// A one-point XY run cannot draw a line segment. Make that point visible
+			// even when the user has left markers disabled.
+			if (dataSerie.length === 1 && !showMarker) showMarker = true;
+			this.serieArray.push(dataSerie);
+			// Preserve the original StochSD single-series jqPlot configuration when
+			// only one run is selected. The multi-run rewrite added comparison label
+			// options to every series; on some jqPlot/Electron combinations that path
+			// can leave a lone XY series unpainted. Multiple runs still use labels
+			// and jqPlot's normal series palette for comparison.
+			let settings = {
+				lineWidth: this.primitive.getAttribute("LineWidth"),
+				shadow: false,
+				showLine,
+				showMarker,
+				markerOptions: { shadow: false, size: 5 },
 				pointLabels: { show: false }
-			});
-		}
-		if (this.primitive.getAttribute("MarkEnd") === "true") {
-			this.serieArray.push([dataSerie[dataSerie.length - 1]]);
-			this.serieSettingsArray.push({
-				color: "#00aa00",
-				showLine: false,
-				showMarker: true,
-				markerOptions: {
-					style: "filledSquare",
-					shadow: false,
-					pointLabels: { show: false }
-				}
-			});
+			};
+			if (this.singleRunMode) {
+				settings.color = "black";
+			} else {
+				settings.label = label;
+				settings.showLabel = true;
+			}
+			this.serieSettingsArray.push(settings);
+			this.mainRunSeriesCount++;
+
+			if (this.primitive.getAttribute("MarkStart") === "true") {
+				markerSeries.push({
+					data: [dataSerie[0]],
+					settings: {
+						showLabel: false,
+						color: "#ff4444",
+						showLine: false,
+						showMarker: true,
+						markerOptions: { shadow: false },
+						pointLabels: { show: false }
+					}
+				});
+			}
+			if (this.primitive.getAttribute("MarkEnd") === "true") {
+				markerSeries.push({
+					data: [dataSerie[dataSerie.length - 1]],
+					settings: {
+						showLabel: false,
+						color: "#00aa00",
+						showLine: false,
+						showMarker: true,
+						markerOptions: { style: "filledSquare", shadow: false },
+						pointLabels: { show: false }
+					}
+				});
+			}
 		}
 
-		do_global_log(JSON.stringify(this.serieSettingsArray));
+		for (let marker of markerSeries) {
+			this.serieArray.push(marker.data);
+			this.serieSettingsArray.push(marker.settings);
+		}
 
-		// We need to ad a delay and respond to events first to make this work in firefox
-		setTimeout(() => {
-			this.updateChart();
-		}, 200);
+		if (!this.mainRunSeriesCount) {
+			this.setEmptyPlot();
+			return;
+		}
+		setTimeout(() => this.updateChart(), 200);
 	}
 
 	updateChart() {
-		// Dont update chart if primitive has been deleted
-		// This check needs to be here since updateChart is updated with a timeout
 		if (!(this.id in connection_array)) return;
-
-		if (this.serieArray == null) {
-			// The series are not initialized yet
+		if (this.serieArray == null || this.mainRunSeriesCount === 0) {
 			this.setEmptyPlot();
 			return;
 		}
@@ -3753,17 +4036,12 @@ class XyPlotVisual extends PlotVisual {
 		}
 		$(this.chartDiv).empty();
 		let axisLimits = JSON.parse(this.primitive.getAttribute("AxisLimits"));
-		this.plot = $.jqplot(this.chartId, this.serieArray, {
+		let plotOptions = {
 			series: this.serieSettingsArray,
 			title: this.primitive.getAttribute("TitleLabel"),
-			grid: {
-				background: "transparent",
-				shadow: false
-			},
+			grid: { background: "transparent", shadow: false },
 			sortData: false,
-			axesDefaults: {
-				labelRenderer: $.jqplot.CanvasAxisLabelRenderer
-			},
+			axesDefaults: { labelRenderer: $.jqplot.CanvasAxisLabelRenderer },
 			axes: {
 				xaxis: {
 					label: this.serieXName,
@@ -3794,8 +4072,14 @@ class XyPlotVisual extends PlotVisual {
 					</table>
 				`),
 				useAxesFormatters: false
-			}
-		});
+			},
+		};
+		// Keep the one-run path as close as possible to the original XY Plot:
+		// no comparison legend configuration is installed at all.
+		if (!this.singleRunMode) {
+			plotOptions.legend = { show: this.mainRunSeriesCount > 1, placement: "outsideGrid" };
+		}
+		this.plot = $.jqplot(this.chartId, this.serieArray, plotOptions);
 		if (axisLimits.xaxis.auto) {
 			axisLimits.xaxis.min = this.plot.axes.xaxis.min;
 			axisLimits.xaxis.max = this.plot.axes.xaxis.max;
@@ -3815,9 +4099,7 @@ class XyPlotVisual extends PlotVisual {
 				${idsToDisplay.map(id => `<li>${getName(findID(id))}</li>`).join("")}
 			</ul>`);
 		}
-		if (idsToDisplay.length !== 2) {
-			selected_str += warningHtml("<br/>Exactly two primitives must be selected!");
-		}
+		if (idsToDisplay.length !== 2) selected_str += warningHtml("<br/>Exactly two model entities must be selected!");
 		this.chartDiv.innerHTML = (`
 			<div class="empty-plot-header">XY Plot</div>
 			${selected_str}
@@ -3971,8 +4253,10 @@ class LinkVisual extends BaseConnection {
 		for (let element of this.showOnlyOnSelect) {
 			element.setAttribute("visibility", "hidden");
 		}
+		refreshSelectionStacking();
 	}
 	select(selectChildren = true) {
+		this.selected = true;
 		let children = getChildren(this.id);
 		for (let id in children) {
 			let object = get_object(id);
@@ -3996,6 +4280,7 @@ class LinkVisual extends BaseConnection {
 		for (let element of this.showOnlyOnSelect) {
 			element.setAttribute("visibility", "visible");
 		}
+		refreshSelectionStacking();
 	}
 	updateClickArea() {
 		this.click_area.x1 = this.curve.x1;
@@ -4011,36 +4296,45 @@ class LinkVisual extends BaseConnection {
 
 	isAcceptableStartAttach(attachVisual) {
 		let okAttachTypes = ["stock", "variable", "constant", "converter", "flow"];
-		return okAttachTypes.includes(attachVisual.getType());
+		if (!okAttachTypes.includes(attachVisual.getType())) return false;
+		let end = this.getEndAttach();
+		if (end && directedLinkExists(attachVisual.id, end.id, this.id)) return false;
+		return true;
 	}
 
 	isAcceptableEndAttach(attachVisual) {
 		let okAttachTypes = ["stock", "variable", "converter", "flow"];
 		if (attachVisual.getType() === "converter") {
-			let linkedPrims = getLinkedPrimitives(findID(attachVisual.id)).filter((prim) => {
-				// filter out linked primitives that have the same source as this link.
-				let source = findID(this.id).source;
-				if (source) {
-					return getID(prim) !== getID(source);
-				}
-				return false;
+			// A Lookup has exactly zero or one incoming Link. Outgoing Links do not
+			// consume that input slot. Ignore this Link itself when an existing
+			// endpoint is being moved/re-attached.
+			let existingIncoming = primitives("Link").filter((link) => {
+				return String(getID(link)) !== String(this.id) &&
+					link.target && String(link.target.id) === String(attachVisual.id);
 			});
-			// only allow converter to have one ingoing link
-			return linkedPrims.length < 1;
+			let start = this.getStartAttach();
+			let duplicate = start && directedLinkExists(start.id, attachVisual.id, this.id);
+			return existingIncoming.length === 0 && !duplicate && attachVisual.is_ghost !== true;
 		}
-		return okAttachTypes.includes(attachVisual.getType()) && attachVisual.is_ghost !== true;
+		if (!okAttachTypes.includes(attachVisual.getType()) || attachVisual.is_ghost === true) return false;
+		let start = this.getStartAttach();
+		if (start && directedLinkExists(start.id, attachVisual.id, this.id)) return false;
+		return true;
 	}
 
 	setStartAttach(new_start_attach) {
-		super.setStartAttach(new_start_attach)
+		let attached = super.setStartAttach(new_start_attach);
+		if (attached === false) return false;
 		if (this._end_attach) {
 			this._end_attach.updateDefinitionError();
 			this._end_attach.update();
 		}
+		return true;
 	}
 	setEndAttach(new_end_attach) {
 		let old_end_attach = this._end_attach;
-		super.setEndAttach(new_end_attach);
+		let attached = super.setEndAttach(new_end_attach);
+		if (attached === false) return false;
 		if (new_end_attach != null && new_end_attach.getType() == "stock") {
 			this.dashLine();
 		} else {
@@ -4054,6 +4348,7 @@ class LinkVisual extends BaseConnection {
 			new_end_attach.updateDefinitionError();
 			new_end_attach.update();
 		}
+		return true;
 	}
 
 	clean() {
@@ -4072,6 +4367,7 @@ class LinkVisual extends BaseConnection {
 		this.primitive.setAttribute("Color", this.color);
 		this.curve.setAttribute("stroke", color);
 		this.arrowPath.setAttribute("stroke", color);
+		if (this.polarityLabel) this.polarityLabel.setAttribute("fill", color);
 		this.start_anchor.setColor(color);
 		this.end_anchor.setColor(color);
 		this.b1_anchor.setColor(color);
@@ -4089,6 +4385,13 @@ class LinkVisual extends BaseConnection {
 		this.arrowPath = SVG.fromString(`<path d="M0,0 -4,12 4,12 Z" stroke="black" fill="white"/>`);
 		this.arrowHead = SVG.group([this.arrowPath]);
 		SVG.translate(this.arrowHead, x4, y4);
+		this.polarityLabel = SVG.text(0, 0, "", "link-polarity", {
+			"fill": this.color,
+			"font-size": "15px",
+			"font-weight": "bold",
+			"dominant-baseline": "middle",
+			"pointer-events": "none"
+		});
 
 		this.click_area = SVG.curve("twoway",x1, y1, x2, y2, x3, y3, x4, y4, { "pointer-events": "all", "stroke": "transparent", "stroke-width": "10" });
 		this.curve = SVG.append(SVG.linkLayer,
@@ -4100,9 +4403,14 @@ class LinkVisual extends BaseConnection {
 		// curve is not included in group since it is one-way and will therefore span an area
 		// The area will be clickable if included in the group
 		this.group = SVG.append(SVG.linkLayer,
-			SVG.group([this.click_area, this.arrowHead])
+			SVG.group([this.click_area, this.arrowHead, this.polarityLabel])
 		);
 		this.group.setAttribute("node_id", this.id);
+		$(this.group).dblclick((event) => {
+			event.preventDefault();
+			event.stopPropagation();
+			this.doubleClick();
+		});
 
 		this.b1_line = SVG.append(SVG.linkLayer, SVG.line(x1, y1, x2, y2, "black", "black", "", { "stroke-dasharray": "5 5" }));
 		this.b2_line = SVG.append(SVG.linkLayer, SVG.line(x4, y4, x3, y3, "black", "black", "", { "stroke-dasharray": "5 5" }));
@@ -4110,6 +4418,30 @@ class LinkVisual extends BaseConnection {
 		this.showOnlyOnSelect = [this.b1_line, this.b2_line];
 
 		this.element_array = this.element_array.concat([this.b1_line, this.b2_line]);
+	}
+	doubleClick() {
+		if (linkPropertiesDialog) linkPropertiesDialog.open(this.id);
+	}
+	updatePolarityLabel() {
+		if (!this.polarityLabel || !this.primitive) return;
+		let polarity = this.primitive.getAttribute("Polarity") || "";
+		this.polarityLabel.textContent = polarity === "+" ? "+" : (polarity === "-" ? "−" : "");
+
+		let b2pos = this.b2_anchor.getPos();
+		let dx = this.endX - b2pos[0];
+		let dy = this.endY - b2pos[1];
+		let length = Math.hypot(dx, dy);
+		if (!Number.isFinite(length) || length < 0.001) {
+			this.polarityLabel.setAttribute("x", this.endX - 14);
+			this.polarityLabel.setAttribute("y", this.endY - 10);
+			return;
+		}
+		let ux = dx / length;
+		let uy = dy / length;
+		let nx = -uy;
+		let ny = ux;
+		this.polarityLabel.setAttribute("x", this.endX - ux * 18 + nx * 10);
+		this.polarityLabel.setAttribute("y", this.endY - uy * 18 + ny * 10);
 	}
 	dashLine() {
 		this.curve.setAttribute("stroke-dasharray", "6 4");
@@ -4199,6 +4531,7 @@ class LinkVisual extends BaseConnection {
 		this.curve.x4 = this.endX;
 		this.curve.y4 = this.endY;
 		this.curve.update();
+		this.updatePolarityLabel();
 	}
 	update() {
 		// This function is similar to TwoPointer::update but it takes attachments into account
@@ -4272,8 +4605,22 @@ class BaseTool {
 }
 BaseTool.init();
 
-class RunTool extends BaseTool {
+class ClearTool extends BaseTool {
 	static enterTool() {
+		SystemikaOutputDevices.clearAll();
+		ToolBox.setTool("mouse");
+	}
+}
+
+class RunTool extends BaseTool {
+	static async enterTool() {
+		if (typeof RunResults !== "undefined" && RunResults.isAdvanceActive()) {
+			runOverlay.requestAdvanceTermination(
+				"A simulation is currently paused in Advance mode. Starting a new run will terminate the current simulation.",
+				() => RunTool.enterTool()
+			);
+			return;
+		}
 		/* Check that all primitives are defined */
 		let definitionErrorPrims = DefinitionError.getAllPrims();
 		if (definitionErrorPrims.length !== 0) {
@@ -4291,32 +4638,83 @@ class RunTool extends BaseTool {
 			unselect_all();
 			(object_array[prim.id] ?? connection_array[prim.id]).select();
 			InfoBar.update();
-		} else {
+			ToolBox.setTool("mouse");
+			return;
+		}
+
+		// Pause/resume an already-running simulation without doing a new run-file
+		// overwrite check. Only a new normal user run enters persistence setup.
+		if (RunResults.runState === "running" || RunResults.runState === "paused") {
 			RunResults.runPauseSimulation();
+			ToolBox.setTool("mouse");
+			return;
+		}
+
+		if (window.SystemikaRunManager && SystemikaRunManager.isBusy()) {
+			xAlert("Systemika is still preparing or saving the previous simulation run.");
+			ToolBox.setTool("mouse");
+			return;
+		}
+
+		try {
+			let decision = window.SystemikaRunManager
+				? await SystemikaRunManager.prepareUserRun()
+				: { proceed: true, persist: false, runName: "Base", overwrite: false };
+			if (!decision.proceed) {
+				ToolBox.setTool("mouse");
+				return;
+			}
+			RunResults.systemikaRunDecision = decision;
+			RunResults.runPauseSimulation();
+		} catch (error) {
+			console.error(error);
+			xAlert(`Unable to prepare the simulation run.<br/><br/>${error.message || error}`);
 		}
 		ToolBox.setTool("mouse");
 	}
 }
 
 class StepTool extends BaseTool {
-	static enterTool() {
-		RunResults.stepSimulation();
+	static async enterTool() {
+		if (RunResults.isAdvanceActive()) {
+			RunResults.stepSimulation();
+			ToolBox.setTool("mouse");
+			return;
+		}
+		try {
+			let decision = window.SystemikaRunManager
+				? await SystemikaRunManager.prepareUserRun()
+				: { proceed: true, persist: false, runName: "Base", overwrite: false };
+			if (!decision.proceed) { ToolBox.setTool("mouse"); return; }
+			RunResults.systemikaAdvanceDecision = decision;
+			RunResults.stepSimulation();
+		} catch (error) {
+			console.error(error);
+			xAlert(`Unable to prepare the Advance run.<br/><br/>${htmlEscape(error.message || String(error))}`);
+		}
 		ToolBox.setTool("mouse");
 	}
 }
 
-class ResetTool extends BaseTool {
+class FinishTool extends BaseTool {
 	static enterTool() {
-		RunResults.resetSimulation();
+		RunResults.finishAdvanceSimulation();
 		ToolBox.setTool("mouse");
 	}
 }
 
 class DeleteTool extends BaseTool {
 	static enterTool() {
+		if (RunResults.isAdvanceActive()) {
+			runOverlay.requestAdvanceTermination(
+				"Deleting model or display objects will terminate the current Advance simulation.",
+				() => DeleteTool.enterTool()
+			);
+			return;
+		}
 		let selected_ids = Object.keys(get_selected_root_objects());
 		if (selected_ids.length == 0) {
-			xAlert("You must select at least one primitive to delete");
+			xAlert("You must select at least one model entity to delete");
 			ToolBox.setTool("mouse");
 			return;
 		}
@@ -4330,6 +4728,13 @@ DeleteTool.init();
 
 class UndoTool extends BaseTool {
 	static enterTool() {
+		if (RunResults.isAdvanceActive()) {
+			runOverlay.requestAdvanceTermination(
+				"Undo will terminate the current Advance simulation.",
+				() => UndoTool.enterTool()
+			);
+			return;
+		}
 		History.doUndo();
 		ToolBox.setTool("mouse");
 	}
@@ -4338,6 +4743,13 @@ UndoTool.init();
 
 class RedoTool extends BaseTool {
 	static enterTool() {
+		if (RunResults.isAdvanceActive()) {
+			runOverlay.requestAdvanceTermination(
+				"Redo will terminate the current Advance simulation.",
+				() => RedoTool.enterTool()
+			);
+			return;
+		}
 		History.doRedo();
 		ToolBox.setTool("mouse");
 	}
@@ -4389,9 +4801,9 @@ class NumberboxTool extends OnePointCreateTool {
 		let selected_ids = Object.keys(get_selected_root_objects());
 		if (selected_ids.length != 1) {
 			if (selected_ids.length == 0) {
-				xAlert("You must first select a primitive for the Number Box.");
+				xAlert("You must first select a model entity for the Number Box.");
 			} else {
-				xAlert("You must first select exactly one primitive for the Number Box.");
+				xAlert("You must first select exactly one model entity for the Number Box.");
 			}
 			ToolBox.setTool("mouse");
 			return;
@@ -4399,7 +4811,7 @@ class NumberboxTool extends OnePointCreateTool {
 
 		let selected_object = get_object(selected_ids[0]);
 		if (this.numberboxable_primitives.indexOf(selected_object.type) == -1) {
-			xAlert("This primitive can not have a Number Box");
+			xAlert("This model entity cannot have a Number Box");
 			ToolBox.setTool("mouse");
 			return;
 		}
@@ -4467,30 +4879,46 @@ class GhostTool extends OnePointCreateTool {
 		this.id_to_ghost = null;
 		this.ghostable_primitives = ["stock", "variable", "constant", "converter", "flow"];
 	}
-	static create(x, y) {
-		let source = findID(this.id_to_ghost);
+	static createFromSource(source, x, y) {
+		if (!source) {
+			xAlert("Please select an item to ghost.");
+			return null;
+		}
 		let ghost = makeGhost(source, [x, y]);
+		if (!ghost) return null;
 		ghost.setAttribute("RotateName", "0");
 		syncVisual(ghost);
 		let DIM_ghost = get_object(ghost.getAttribute("id"));
-		source.subscribeAttribute(DIM_ghost.changeAttributeHandler);
+		if (DIM_ghost && typeof source.subscribeAttribute === "function") {
+			source.subscribeAttribute(DIM_ghost.changeAttributeHandler);
+		}
+		return ghost;
+	}
+	static create(x, y) {
+		let source = this.id_to_ghost ? findID(this.id_to_ghost) : null;
+		if (source) {
+			this.createFromSource(source, x, y);
+			return;
+		}
+
+		// No primitive was pre-selected. The canvas click defines where the ghost
+		// will be placed; an in-app chooser then lets the user select its source.
+		// This avoids browser-native prompt/alert dialogs, which are unreliable in
+		// the Electron editor iframe on some Linux window managers.
+		let chooser = new GhostSourceDialog(x, y);
+		chooser.show();
 	}
 	static enterTool() {
+		this.id_to_ghost = null;
 		let selectedIds = get_selected_ids();
 		// filter out non root object, e.g. anchors
 		let selectedObjects = selectedIds.filter(id => !id.includes(".")).map(get_object);
-		if(selectedObjects.length === 0) {
-		  const ghostedId = prompt("Name of the variable to ghost:")
-			const object = Object.values(get_all_objects()).find(o => o.primitive.value.getAttribute("name") === ghostedId)
-			if(object) {
-			  selectedObjects = [object]
-			} else {
-			  xAlert("No variable with that name exists.")
-				ToolBox.setTool("mouse")
-				return
-			}
-		} if (selectedObjects.length != 1) {
-			xAlert("You must first select exactly one primitive to ghost");
+		if (selectedObjects.length === 0) {
+			// Allow the user to place first and choose the source afterward.
+			return;
+		}
+		if (selectedObjects.length != 1) {
+			xAlert("You must first select exactly one model entity to ghost");
 			ToolBox.setTool("mouse");
 			return;
 		}
@@ -4501,7 +4929,7 @@ class GhostTool extends OnePointCreateTool {
 			return;
 		}
 		if (this.ghostable_primitives.indexOf(selectedObject.type) == -1) {
-			xAlert(`This primitive is not ghostable`);
+			xAlert(`This model entity cannot be ghosted`);
 			ToolBox.setTool("mouse");
 			return;
 		}
@@ -4722,7 +5150,7 @@ class MouseTool extends BaseTool {
 
 class TwoPointerTool extends BaseTool {
 	static init() {
-		this.primitive = null; // The primitive in Insight Maker engine we are creating
+		this.primitive = null; // The model primitive being created
 		this.current_connection = null; // The visual we are working on right now
 		this.type = "flow";
 		this.rightClickMode = false;
@@ -4748,7 +5176,7 @@ class TwoPointerTool extends BaseTool {
 		let primitive_name = findFreeName(type_basename[this.getType()]);
 		this.createTwoPointer(x, y, primitive_name);
 
-		// subscribes to changes in insight makers x and y positions. (these valus are then saved)
+		// subscribes to stored model-position changes so they can be saved
 		this.primitive.subscribePosition(this.current_connection.positionUpdateHandler);
 		if (start_element != null && this.current_connection.getStartAttach) {
 			this.current_connection.setStartAttach(get_parent(start_element));
@@ -5132,8 +5560,10 @@ class LinkTool extends TwoPointerTool {
 			attach_anchor(anchor);
 			parent.update();
 			if (parent.getStartAttach() === null || parent.getEndAttach() === null) {
-				// delete link is not attached at both ends
-				delete_selected_objects();
+				// An incomplete Link is invalid model state. Delete this Link explicitly
+				// rather than relying on selection state, so releasing an endpoint on
+				// empty canvas can never leave a hanging Link behind.
+				tool_deletePrimitive(parent.id);
 			}
 		} else if (anchor.getAnchorType() === "bezier1" || anchor.getAnchorType() === "bezier2") {
 			parent.update();
@@ -5178,17 +5608,18 @@ function attach_anchor(anchor) {
 		return false;
 	}
 
+	let attached = false;
 	switch (anchor.getAnchorType()) {
 		case "start":
-			parentConnection.setStartAttach(attach_to);
+			attached = parentConnection.setStartAttach(attach_to) !== false;
 			break;
 		case "end":
-			parentConnection.setEndAttach(attach_to);
+			attached = parentConnection.setEndAttach(attach_to) !== false;
 			break;
 	}
 
 	parentConnection.update();
-	return true;
+	return attached;
 }
 
 let currentTool = MouseTool;
@@ -5436,6 +5867,7 @@ function primitive_mousedown(node_id, event, new_primitive) {
 			mouse.lastClickedPrimitive.select();
 		}
 		mouse.clickedOnObject = true
+		refreshSelectionStacking();
 	}
 }
 
@@ -5544,6 +5976,7 @@ function unselect_all() {
 	for (let key in connection_array) {
 		connection_array[key].unselect();
 	}
+	refreshSelectionStacking();
 }
 
 function unselect_all_but(dont_unselect_id) {
@@ -5557,6 +5990,7 @@ function unselect_all_but(dont_unselect_id) {
 			connection_array[key].unselect();
 		}
 	}
+	refreshSelectionStacking();
 }
 
 function rotate_name(node_id) {
@@ -5627,6 +6061,22 @@ class Zoom {
 		this.apply();
 		// A wider window can show the whole canvas at a smaller level than before.
 		$(window).on("resize", () => this.setLevel(this.level));
+
+		// Ctrl + mouse wheel / trackpad scroll zooms the model canvas. Prevent the
+		// browser/Electron page-zoom gesture and keep the canvas point under the
+		// pointer stationary, which makes repeated wheel zooming feel predictable.
+		this.view.addEventListener("wheel", (event) => {
+			if (!event.ctrlKey || event.deltaY === 0) return;
+			event.preventDefault();
+			event.stopPropagation();
+			let factor = event.deltaY < 0 ? this.STEP : 1 / this.STEP;
+			// If one or more canvas entities are selected, keep the selection as
+			// the zoom focal point. Otherwise preserve the existing pointer-centred
+			// Ctrl+wheel behavior.
+			let selectionAnchor = this.getSelectionAnchorClient();
+			if (selectionAnchor) this.setLevelAt(this.level * factor, selectionAnchor.x, selectionAnchor.y);
+			else this.setLevelAt(this.level * factor, event.clientX, event.clientY);
+		}, { passive: false });
 	}
 
 	static get view() {
@@ -5642,14 +6092,60 @@ class Zoom {
 		return Math.min(view.clientWidth / CANVAS_WIDTH, view.clientHeight / CANVAS_HEIGHT);
 	}
 
+	// Screen position of the centre of the current canvas selection. Multiple
+	// selected entities use their centroid. Returning null preserves the normal
+	// viewport/pointer-centred zoom behavior when nothing is selected.
+	static getSelectionAnchorClient() {
+		if (typeof get_selected_root_objects !== "function") return null;
+		let selected = Object.values(get_selected_root_objects() || {}).filter(Boolean);
+		let positions = selected.map((item) => {
+			try { return typeof item.getPos === "function" ? item.getPos() : null; } catch (_) { return null; }
+		}).filter((pos) => Array.isArray(pos) && Number.isFinite(pos[0]) && Number.isFinite(pos[1]));
+		if (!positions.length) return null;
+
+		let canvasX = positions.reduce((sum, pos) => sum + pos[0], 0) / positions.length;
+		let canvasY = positions.reduce((sum, pos) => sum + pos[1], 0) / positions.length;
+		let view = this.view;
+		let rect = view.getBoundingClientRect();
+		return {
+			x: rect.left + canvasX * this.level - view.scrollLeft,
+			y: rect.top + canvasY * this.level - view.scrollTop
+		};
+	}
+
 	static zoomIn() {
-		this.setLevel(this.level * this.STEP);
+		let anchor = this.getSelectionAnchorClient();
+		if (anchor) this.setLevelAt(this.level * this.STEP, anchor.x, anchor.y);
+		else this.setLevel(this.level * this.STEP);
 	}
 	static zoomOut() {
-		this.setLevel(this.level / this.STEP);
+		let anchor = this.getSelectionAnchorClient();
+		if (anchor) this.setLevelAt(this.level / this.STEP, anchor.x, anchor.y);
+		else this.setLevel(this.level / this.STEP);
 	}
 	static zoomReset() {
-		this.setLevel(1);
+		let anchor = this.getSelectionAnchorClient();
+		if (anchor) this.setLevelAt(1, anchor.x, anchor.y);
+		else this.setLevel(1);
+	}
+
+	// Zoom around a screen point (used by Ctrl+wheel).
+	static setLevelAt(newLevel, clientX, clientY) {
+		let view = this.view;
+		if (!view) return;
+		let level = Math.min(Math.max(newLevel, this.minLevel()), this.MAX);
+		if (level === this.level) return;
+
+		let rect = view.getBoundingClientRect();
+		let pointerX = Number.isFinite(clientX) ? clientX - rect.left : view.clientWidth / 2;
+		let pointerY = Number.isFinite(clientY) ? clientY - rect.top : view.clientHeight / 2;
+		let canvasX = (view.scrollLeft + pointerX) / this.level;
+		let canvasY = (view.scrollTop + pointerY) / this.level;
+
+		this.level = level;
+		this.apply();
+		view.scrollLeft = canvasX * level - pointerX;
+		view.scrollTop = canvasY * level - pointerY;
 	}
 
 	// Keeps whatever is in the middle of the view in the middle of the view.
@@ -5669,21 +6165,24 @@ class Zoom {
 
 		view.scrollLeft = centreX * level - view.clientWidth / 2;
 		view.scrollTop = centreY * level - view.clientHeight / 2;
-
-		// Plots are HTML overlays positioned in screen pixels rather than svg
-		// user units, so unlike the rest of the canvas they don't rescale for
-		// free when the svg's width/height change; reposition them by hand.
-		let all_objects = get_all_objects();
-		for (let key in all_objects) {
-			if (all_objects[key] instanceof HtmlOverlayTwoPointer) {
-				all_objects[key].updateGraphics();
-			}
-		}
 	}
 
 	static apply() {
 		SVG.svgElement.setAttribute("width", CANVAS_WIDTH * this.level);
 		SVG.svgElement.setAttribute("height", CANVAS_HEIGHT * this.level);
+
+		// Plot contents are HTML overlays positioned above the SVG, while their
+		// borders live inside the SVG. Scale and reposition those overlays by the
+		// same canvas zoom so axes, labels, legends, and plotted series zoom with
+		// the border instead of remaining at a fixed screen size.
+		document.querySelectorAll(".canvas-scaled-html-overlay").forEach((element) => {
+			let left = Number(element.dataset.canvasLeft);
+			let top = Number(element.dataset.canvasTop);
+			if (Number.isFinite(left)) element.style.left = (left * this.level) + "px";
+			if (Number.isFinite(top)) element.style.top = (top * this.level) + "px";
+			element.style.transformOrigin = "0 0";
+			element.style.transform = `scale(${this.level})`;
+		});
 	}
 
 	// Screen pixels measured from the svg's top left, to canvas coordinates.
@@ -5763,6 +6262,11 @@ function mouseMoveHandler(event) {
 
 	mouse.x = x;
 	mouse.y = y;
+	let rect = SVG.svgElement.getBoundingClientRect();
+	if (event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom) {
+		mouse.lastCanvasX = x;
+		mouse.lastCanvasY = y;
+	}
 
   if (mouse.isLeftDown) {
     currentTool.mouseMove(x, y, event.shiftKey);
@@ -5861,12 +6365,35 @@ class ToolBox {
 			"xyplot": XyPlotTool,
 			"histoplot": HistoPlotTool,
 			"numberbox": NumberboxTool,
+			"clear": ClearTool,
 			"run": RunTool,
 			"step": StepTool,
-			"reset": ResetTool
+			"finish": FinishTool
 		};
 	}
 	static setTool(toolName, whichMouseButton) {
+		// During a paused Advance run, result exploration remains available but
+		// tools that mutate the model or simulation state require termination.
+		// Display-creation tools are allowed so users can investigate partial
+		// results while stepping through a run.
+		let advanceSafeTools = ["mouse", "step", "finish", "clear", "table", "timeplot", "compareplot", "xyplot", "histoplot"];
+		// RunResults is declared later in this classic script. `typeof RunResults`
+		// still throws while that lexical class binding is in its temporal dead
+		// zone, which can happen during early toolbar initialization. Probe it
+		// defensively so startup never depends on script timing.
+		let runResultsReady = false;
+		try {
+			runResultsReady = typeof RunResults !== "undefined";
+		} catch (_error) {
+			runResultsReady = false;
+		}
+		if (runResultsReady && RunResults.isAdvanceActive() && !advanceSafeTools.includes(toolName)) {
+			let message = toolName === "run"
+				? "A simulation is currently paused in Advance mode. Starting a new run will terminate the current simulation."
+				: "The active Advance simulation has compiled the current model structure. Structural changes require ending the stepped simulation. Terminate it now and apply the change?";
+			runOverlay.requestAdvanceTermination(message, () => this.setTool(toolName, whichMouseButton));
+			return;
+		}
 		if (toolName in this.tools) {
 			$(".tool-button").removeClass("pressed");
 			$("#btn_" + toolName).addClass("pressed");
@@ -5900,71 +6427,233 @@ class ToolBox {
 }
 ToolBox.init();
 
-class ClipboardItem {
-	constructor(id) {
-		this.id = id;
-		this.absolutePosition = [0, 0];
-		this.relativePosition = [0, 0];
-	}
-}
-
 class Clipboard {
 	static init() {
-		this.copiedItems = [];
+		this.items = [];
+		this.mode = "copy";
+		this.selectionCenter = null;
+		this.pasteCount = 0;
+		this.updateButtons();
 	}
-	static copyObject(clipboardItem) {
-		let parent = graph.children[0].children[0];
-		let vertex = simpleCloneNode2(findID(clipboardItem.id), parent);
-		let relativePosition = clipboardItem.relativePosition;
-		setCenterPosition(vertex, [mouse.x + relativePosition[0], mouse.y + relativePosition[1]]);
-		let oldName = getName(vertex);
-		setName(vertex, findFreeName(oldName + "_"));
-		syncAllVisuals();
+	static updateButtons() {
+		let pasteButton = typeof document !== "undefined" ? document.getElementById("btn_paste") : null;
+		if (pasteButton) pasteButton.disabled = this.items.length === 0;
+	}
+	static getSelectionRootIds() {
+		let selected = get_selected_root_objects();
+		let ids = Object.keys(selected);
+		let idSet = new Set(ids.map(String));
+
+		// When both ends of a Flow or Link are selected, include the connector even
+		// if the user selected the structure by its nodes rather than the line itself.
+		// This makes copying a stock-flow structure behave as one coherent object.
+		for (let id in connection_array) {
+			let connection = connection_array[id];
+			if (!connection || !["flow", "link"].includes(connection.type)) continue;
+			let start = connection.getStartAttach ? connection.getStartAttach() : null;
+			let end = connection.getEndAttach ? connection.getEndAttach() : null;
+			if (!start || !end) continue;
+			let startId = String(get_parent_id(start.id));
+			let endId = String(get_parent_id(end.id));
+			if (idSet.has(startId) && idSet.has(endId) && !idSet.has(String(id))) {
+				ids.push(String(id));
+				idSet.add(String(id));
+			}
+		}
+		return ids;
+	}
+	static snapshotPrimitive(id) {
+		let primitive = findID(id);
+		let visual = get_object(id);
+		if (!primitive || !visual || !primitive.value) return null;
+		let position = typeof visual.getPos === "function" ? visual.getPos() : getCenterPosition(primitive);
+		let ends = (primitive.source || primitive.target) ? getEnds(primitive) : [null, null];
+		return {
+			oldId: String(id),
+			type: getType(primitive) || "",
+			name: getName(primitive) || "",
+			value: primitive.value.cloneNode(true),
+			position: Array.isArray(position) ? [Number(position[0]), Number(position[1])] : [0, 0],
+			sourceId: ends[0] ? String(ends[0].id) : null,
+			targetId: ends[1] ? String(ends[1].id) : null
+		};
+	}
+	static capture(mode = "copy") {
+		let ids = this.getSelectionRootIds();
+		if (!ids.length) return false;
+		let items = ids.map(id => this.snapshotPrimitive(id)).filter(Boolean);
+		if (!items.length) return false;
+		this.items = items;
+		this.mode = mode;
+		this.selectionCenter = centerCoordinates(items.map(item => item.position));
+		this.pasteCount = 0;
+		this.updateButtons();
+		return true;
 	}
 	static copy() {
-		this.copiedItems = [];
-		let rawSelectedIdArray = get_selected_ids();
+		if (!this.capture("copy")) {
+			if (typeof xAlert === "function") xAlert("Select at least one model object to copy.");
+			return false;
+		}
+		return true;
+	}
+	static cut() {
+		if (RunResults.isAdvanceActive()) {
+			runOverlay.requestAdvanceTermination(
+				"Cutting model objects will terminate the current Advance simulation.",
+				() => Clipboard.cut()
+			);
+			return false;
+		}
+		if (!this.capture("cut")) {
+			if (typeof xAlert === "function") xAlert("Select at least one model object to cut.");
+			return false;
+		}
+		delete_selected_objects();
+		History.storeUndoState();
+		InfoBar.update();
+		return true;
+	}
+	static freeCopyName(originalName, reservedNames) {
+		let base = String(originalName || "Copy").trim() || "Copy";
+		let counter = 1;
+		let candidate = `${base} ${counter}`;
+		while (findName(candidate) != null || reservedNames.has(candidate.toLowerCase())) {
+			counter++;
+			candidate = `${base} ${counter}`;
+		}
+		reservedNames.add(candidate.toLowerCase());
+		return candidate;
+	}
+	static replaceFormulaNames(value, nameMap) {
+		if (typeof value !== "string" || !value.includes("[")) return value;
+		let result = value;
+		for (let [oldName, newName] of nameMap.entries()) {
+			if (!oldName || oldName === newName) continue;
+			let escaped = oldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+			let pattern = new RegExp(`\\[\\s*${escaped}\\s*\\]`, "gi");
+			result = result.replace(pattern, `[${newName}]`);
+		}
+		return result;
+	}
+	static remapFormulaAttributes(primitive, nameMap) {
+		const formulaAttributes = ["InitialValue", "FlowRate", "Equation", "Value", "Function", "Action", "Size"];
+		for (let attribute of formulaAttributes) {
+			let value = primitive.getAttribute(attribute);
+			if (value == null || value === "") continue;
+			let remapped = this.replaceFormulaNames(String(value), nameMap);
+			if (remapped !== value) primitive.value.setAttribute(attribute, remapped);
+		}
+	}
+	static remapIdAttributes(primitive, idMap) {
+		for (let attribute of ["Source", "Target"]) {
+			let oldValue = primitive.getAttribute(attribute);
+			if (oldValue != null && idMap.has(String(oldValue))) {
+				primitive.value.setAttribute(attribute, String(idMap.get(String(oldValue)).id));
+			}
+		}
+		let primitivesValue = primitive.getAttribute("Primitives");
+		if (primitivesValue) {
+			let ids = String(primitivesValue).split(",").map(id => id.trim()).filter(Boolean);
+			let remapped = ids.map(id => idMap.has(id) ? String(idMap.get(id).id) : id);
+			primitive.value.setAttribute("Primitives", remapped.join(","));
+		}
+	}
+	static getPasteTarget() {
+		let source = this.selectionCenter || [0, 0];
+		let lastCanvas = [mouse.lastCanvasX, mouse.lastCanvasY];
+		let hasCanvasPoint = Number.isFinite(lastCanvas[0]) && Number.isFinite(lastCanvas[1]);
+		if (hasCanvasPoint) {
+			let dx = lastCanvas[0] - source[0];
+			let dy = lastCanvas[1] - source[1];
+			if (Math.sqrt(dx * dx + dy * dy) >= 24) return lastCanvas;
+		}
+		let offset = 40 * (this.pasteCount + 1);
+		return [source[0] + offset, source[1] + offset];
+	}
+	static paste() {
+		if (!this.items.length) return false;
+		if (RunResults.isAdvanceActive()) {
+			runOverlay.requestAdvanceTermination(
+				"Pasting model objects will terminate the current Advance simulation.",
+				() => Clipboard.paste()
+			);
+			return false;
+		}
 
-		// Create parentIdArray as we are only intressted in copying parent nodes
-		let parentIdArray = [];
-		for (let i in rawSelectedIdArray) {
-			let parentId = get_parent_id(rawSelectedIdArray[i]);
-			if (parentIdArray.indexOf(parentId) == -1) {
-				parentIdArray.push(parentId);
+		let parent = graph.children[0].children[0];
+		let idMap = new Map();
+		let newItems = [];
+		let reservedNames = new Set();
+		let nameMap = new Map();
+		let preserveNames = this.mode === "cut";
+
+		// Decide all names first so formulas inside one copied primitive can safely
+		// refer to another copied primitive regardless of clone order.
+		for (let item of this.items) {
+			let isStaticText = String(item.type).toLowerCase() === "textarea" || String(item.type).toLowerCase() === "text";
+			item.pasteName = isStaticText
+				? item.name
+				: (preserveNames && findName(item.name) == null
+					? item.name
+					: this.freeCopyName(item.name, reservedNames));
+			if (!isStaticText) nameMap.set(item.name, item.pasteName);
+		}
+
+		for (let item of this.items) {
+			let sourceNode = { value: item.value };
+			let clone = simpleCloneNode2(sourceNode, parent);
+			clearPrimitiveCache();
+			idMap.set(item.oldId, clone);
+			newItems.push({ item, clone });
+			setName(clone, item.pasteName);
+		}
+
+		for (let entry of newItems) {
+			let { item, clone } = entry;
+			this.remapIdAttributes(clone, idMap);
+			this.remapFormulaAttributes(clone, nameMap);
+			if (item.sourceId || item.targetId) {
+				let source = item.sourceId && idMap.has(item.sourceId) ? idMap.get(item.sourceId) : (item.sourceId ? findID(item.sourceId) : null);
+				let target = item.targetId && idMap.has(item.targetId) ? idMap.get(item.targetId) : (item.targetId ? findID(item.targetId) : null);
+				// Pasting a Link by itself must not bypass the same duplicate-link rule
+				// enforced by interactive drawing. If both endpoints were copied too,
+				// source/target resolve to the new clones and the connection remains valid.
+				if (String(getType(clone)).toLowerCase() === "link" && source && target &&
+					directedLinkExists(source.id, target.id, clone.id)) {
+					removePrimitive(clone);
+					idMap.delete(item.oldId);
+					entry.skip = true;
+					continue;
+				}
+				setEnds(clone, [source || null, target || null]);
 			}
 		}
 
-		// Create clipboard items
-		for (let i in parentIdArray) {
-			let clipboardItem = new ClipboardItem(parentIdArray[i]);
-			let tmp_object = get_object(parentIdArray[i]);
-
-			let absolutePosition = tmp_object.getPos();
-			clipboardItem.absolutePosition = absolutePosition;
-
-			this.copiedItems.push(clipboardItem);
+		let targetCenter = this.getPasteTarget();
+		let sourceCenter = this.selectionCenter || [0, 0];
+		let delta = [targetCenter[0] - sourceCenter[0], targetCenter[1] - sourceCenter[1]];
+		for (let entry of newItems) {
+			if (entry.skip) continue;
+			let pos = entry.item.position;
+			setCenterPosition(entry.clone, [pos[0] + delta[0], pos[1] + delta[1]]);
 		}
 
-		// Create position list to calculate relative positions
-		let positionList = [];
-		for (let i in this.copiedItems) {
-			positionList.push(this.copiedItems[i].absolutePosition);
-			do_global_log(JSON.stringify(positionList));
+		clearPrimitiveCache();
+		syncAllVisuals();
+		unselect_all();
+		for (let entry of newItems) {
+			if (entry.skip) continue;
+			let visual = get_object(String(entry.clone.id));
+			if (visual) visual.select(false);
 		}
-		let centerPosition = centerCoordinates(positionList);
-		do_global_log("Center positio" + JSON.stringify(centerPosition));
-
-
-		// Calculate rel positions for objects
-		for (let i in this.copiedItems) {
-			do_global_log("hoj " + JSON.stringify(positionDifference(this.copiedItems[i].absolutePosition, centerPosition)));
-			this.copiedItems[i].relativePosition = positionDifference(this.copiedItems[i].absolutePosition, centerPosition);
-		}
-	}
-	static paste() {
-		for (let i in this.copiedItems) {
-			this.copyObject(this.copiedItems[i]);
-		}
+		InfoBar.update();
+		History.storeUndoState();
+		this.pasteCount++;
+		// A cut is a move only on its first paste. Further pastes are copies and
+		// therefore require unique names.
+		if (this.mode === "cut") this.mode = "copy";
+		return true;
 	}
 }
 Clipboard.init();
@@ -6001,8 +6690,16 @@ $(window).load(function () {
 	Zoom.init()
 	RectSelector.init();
 	Preferences.setup();
+	if (window.SystemikaRunManager) {
+		SystemikaRunManager.initControls();
+	}
 
 	$(".tool-button").mousedown(function (event) {
+		if ($(this).attr("data-action") === "toggle-question-marks") {
+			event.preventDefault();
+			DefinitionQuestionMarks.toggle();
+			return;
+		}
 		let toolName = $(this).attr("data-tool");
 		ToolBox.setTool(toolName, event.which);
 	});
@@ -6023,6 +6720,23 @@ $(window).load(function () {
 		  if(get_selected_ids().length > 0)
 				DeleteTool.enterTool();
 		}
+		// Canvas navigation shortcuts. Shift+Page Up/Down scroll horizontally by
+		// roughly one visible page; Ctrl+Home returns to the canvas origin.
+		if (event.shiftKey && !event.ctrlKey && !event.metaKey && (event.key === "PageUp" || event.key === "PageDown")) {
+			event.preventDefault();
+			let view = Zoom.view;
+			let amount = Math.max(1, Math.floor(view.clientWidth * 0.9));
+			view.scrollLeft += event.key === "PageDown" ? amount : -amount;
+			return;
+		}
+		if (((!isMac && event.ctrlKey) || (isMac && event.metaKey)) && event.key === "Home") {
+			event.preventDefault();
+			let view = Zoom.view;
+			view.scrollLeft = 0;
+			view.scrollTop = 0;
+			return;
+		}
+
 		let moveSize = 2;
 		if (event.shiftKey) {
 			moveSize = 16;
@@ -6058,7 +6772,7 @@ $(window).load(function () {
 			}
 			if (event.key === "0") {
 				event.preventDefault();
-				Zoom.zoomReset();
+				ClearTool.enterTool();
 				return;
 			}
 			if (event.key == "1" || event.key.toLowerCase() == "r") {
@@ -6071,7 +6785,7 @@ $(window).load(function () {
 			}
 			if (event.key == "3") {
 				event.preventDefault();
-				ResetTool.enterTool();
+				FinishTool.enterTool();
 			}
 			if (event.key.toLowerCase() == "o") {
 				event.preventDefault();
@@ -6079,48 +6793,86 @@ $(window).load(function () {
 			}
 			if (event.key.toLowerCase() == "s") {
 				event.preventDefault();
-				$("#btn_save").click();
+				if (event.shiftKey && fileManager.hasSaveAs()) $("#btn_save_as").click();
+				else $("#btn_save").click();
 			}
 			if (event.key.toLowerCase() == "p") {
 				event.preventDefault();
 				$("#btn_print_model").click();
 			}
 			if (event.key.toLowerCase() == "a") {
-				for (let id in object_array) { object_array[id].select(); }
-				for (let id in connection_array) { connection_array[id].select(); }
+				if (RunResults.isAdvanceActive()) {
+					unselect_all();
+					for (let id in connection_array) {
+						let item = connection_array[id];
+						if (["table", "timeplot", "compareplot", "xyplot", "histoplot"].includes(item.type)) item.select();
+					}
+				} else {
+					for (let id in object_array) { object_array[id].select(); }
+					for (let id in connection_array) { connection_array[id].select(); }
+				}
+				refreshSelectionStacking();
 			}
 			if (event.key.toLowerCase() == "z") {
-				History.doUndo();
+				UndoTool.enterTool();
       }
 			if (event.key.toLowerCase() == "y") {
-				History.doRedo();
+				RedoTool.enterTool();
 			}
 			if (event.key.toLowerCase() == "c") {
-				// Clipboard.copy();
+				event.preventDefault();
+				Clipboard.copy();
+			}
+			if (event.key.toLowerCase() == "x") {
+				event.preventDefault();
+				Clipboard.cut();
 			}
 			if (event.key.toLowerCase() == "v") {
-				// Clipboard.paste();
-				// History.storeUndoState();
+				event.preventDefault();
+				Clipboard.paste();
 			}
 		} else if(!isDrawingFlow) {
-      if (get_selected_ids().length === 0)
-        if (event.key === ".")
-          document.querySelector("#tools-menu-button").classList.toggle("hidden");
-        else if (event.key === ",")
-          RunResults.setIgnoreUnits(!RunResults.ignoreUnits)
-      else if (event.key === "s") ToolBox.setTool("stock")
-      else if (event.key === "a") ToolBox.setTool("variable")
-      else if (event.key === "f") ToolBox.setTool("flow")
-      else if (event.key === "c") ToolBox.setTool("converter")
-      else if (event.key === "p") ToolBox.setTool("constant")
-      else if (event.key === "g") ToolBox.setTool("ghost")
-      else if (event.key === "l") ToolBox.setTool("link")
-      else if (event.key === "z") ToolBox.setTool(lastTool)
+			let key = String(event.key || "").toLowerCase();
+			{
+				// Single-key creation shortcuts. L is the one contextual exception:
+				// when exactly one Link is selected it opens Link Properties; otherwise
+				// it starts Link creation. Dialogs/text inputs stop propagation.
+				const toolShortcuts = {
+					s: "stock",
+					f: "flow",
+					a: "variable",
+					c: "constant",
+					k: "converter",
+					g: "ghost",
+					p: "compareplot",
+					t: "table",
+					x: "xyplot",
+					n: "numberbox",
+					h: "histoplot",
+					r: "rotatename"
+				};
+				if (key === "q") {
+					event.preventDefault();
+					DefinitionQuestionMarks.toggle();
+				} else if (key === "l") {
+					let selectedRoots = Object.values(get_selected_root_objects()).filter(Boolean);
+					if (selectedRoots.length === 1 && selectedRoots[0].type === "link") {
+						event.preventDefault();
+						selectedRoots[0].doubleClick();
+					} else {
+						ToolBox.setTool("link");
+					}
+				} else if (toolShortcuts[key]) ToolBox.setTool(toolShortcuts[key]);
+				else if (key === "z") ToolBox.setTool(lastTool);
+			}
 		} else if (event.key === "Shift") FlowTool.rightMouseDown(currentMousePos[0], currentMousePos[1]);
 		environment.keyDown(event);
 	});
 
 	$(SVG.svgElement).mousedown(mouseDownHandler);
+	$("#svgplanebackground").mousedown(function(event) {
+		if (event.target === this) mouseDownHandler(event);
+	});
 	SVG.svgElement.addEventListener('contextmenu', function (event) {
 		event.preventDefault();
 		return false;
@@ -6153,6 +6905,9 @@ $(window).load(function () {
 		History.storeUndoState();
 		fileManager.saveModelAs();
 	});
+	$("#unsaved_changes").click(function () {
+		showUnsavedSaveChoice();
+	});
 	$("#btn_import").click(function () {
 		saveChangedAlert(function () {
 			fileManager.importModel();
@@ -6168,18 +6923,41 @@ $(window).load(function () {
 			}
 		});
 	});
-	$("#btn_simulation_settings").click(function () {
+	let openSimulationSettings = () => {
+		// Simulation Settings remains available during Advance. In that state the
+		// dialog locks settings that would invalidate the compiled run, but keeps
+		// Advance By editable so users can change the next interactive jump.
 		simulationSettings.show();
-	});
-	$("#progress-bar").dblclick(function () {
-		simulationSettings.show();
-	})
+	};
+	$("#btn_simulation_settings").click(openSimulationSettings);
+	// A single click on the simulation status/progress control opens Simulation
+	// Settings. This replaces the old double-click-only interaction, which was
+	// unnecessarily difficult to discover and inconsistent with toolbar controls.
+	$("#progress-bar").click(openSimulationSettings)
 	$("#btn_equation_list").click(function () {
 		equationList.show();
 	});
 	$("#btn_print_model").click(function () {
 		printDiagram();
 	});
+	$("#btn_copy").click(function () { Clipboard.copy(); });
+	$("#btn_cut").click(function () { Clipboard.cut(); });
+	$("#btn_paste").click(function () { Clipboard.paste(); });
+	let closeColourPicker = () => {
+		let picker = document.getElementById("toolbar-colour-picker");
+		let button = document.getElementById("btn_colour");
+		if (picker) picker.hidden = true;
+		if (button) button.setAttribute("aria-expanded", "false");
+	};
+	$("#btn_colour").click(function (event) {
+		event.stopPropagation();
+		let picker = document.getElementById("toolbar-colour-picker");
+		if (!picker) return;
+		picker.hidden = !picker.hidden;
+		this.setAttribute("aria-expanded", picker.hidden ? "false" : "true");
+	});
+	$("#toolbar-colour-picker").click(function (event) { event.stopPropagation(); });
+	$(document).click(function () { closeColourPicker(); });
 	$("#btn_black").click(function () {
 		setColorToSelection("black");
 	});
@@ -6219,11 +6997,20 @@ $(window).load(function () {
 	$("#btn_magenta").click(function () {
 		setColorToSelection("magenta");
 	});
-	$("#btn_macro").click(function () {
-		macroDialog.show();
-	});
 	$("#btn_debug").click(function () {
 		debugDialog.show();
+	});
+	$("#btn_getting_started").click(function () {
+		gettingStartedDialog.show();
+	});
+	$("#btn_shortcuts").click(function () {
+		keyboardShortcutsDialog.show();
+	});
+	$("#btn_functions_help").click(function () {
+		functionsAndEquationsDialog.show();
+	});
+	$("#btn_units_help").click(function () {
+		unitsHelpDialog.show();
 	});
 	$("#btn_about").click(function () {
 		aboutDialog.show();
@@ -6237,34 +7024,24 @@ $(window).load(function () {
 	$("#btn_browser_models").click(function () {
 		browserModelsDialog.show();
 	});
-	$("#btn_fullpotentialcss").click(function () {
-		fullPotentialCssDialog.show();
-	});
 	$("#btn_license").click(function () {
 		licenseDialog.show();
 	});
 	$("#btn_thirdparty").click(function () {
 		thirdPartyLicensesDialog.show();
 	});
-	$("#btn_restart").click(function () {
-		saveChangedAlert(function () {
-			applicationReload();
-		});
-	});
-	$("#btn_preserve_restart").click(function () {
-		preserveRestart();
-	});
-	$(".btn_load_plugin").click((event) => {
-		let pluginName = $(event.target).data("plugin-name");
-		loadPlugin(pluginName);
-	});
 	$("#btn_timeunit").click(function () {
+		if (RunResults.isAdvanceActive()) {
+			runOverlay.requestAdvanceTermination(
+				"The current Advance simulation must be terminated before changing simulation time settings.",
+				() => timeUnitDialog.show()
+			);
+			return;
+		}
 		timeUnitDialog.show();
   })
-  $("#btn_ignore_units").click(function () {
-    $("#ignore_units-value").text(!RunResults.ignoreUnits ? "No" : "Yes");
-    $("#ignore_units-value").toggleClass("warning")
-    RunResults.setIgnoreUnits(!RunResults.ignoreUnits);
+  $("#btn_check_units").click(function () {
+		if (unitCheckDialog) unitCheckDialog.show();
   })
 	$("#btn_zoom_in").click(function () {
 		Zoom.zoomIn();
@@ -6306,16 +7083,20 @@ $(window).load(function () {
 			});
 		}
 	}
-	macroDialog = new MacroDialog();
 	definitionEditor = new DefinitionEditor();
 	converterDialog = new ConverterDialog();
+	linkPropertiesDialog = new LinkPropertiesDialog();
 	preferencesDialog = new PreferencesDialog();
 	simulationSettings = new SimulationSettings();
 	timeUnitDialog = new TimeUnitDialog();
 	equationList = new EquationListDialog();
+	unitCheckDialog = new UnitCheckDialog();
 	debugDialog = new DebugDialog();
 	aboutDialog = new AboutDialog();
-	fullPotentialCssDialog = new FullPotentialCSSDialog();
+	gettingStartedDialog = new GettingStartedDialog();
+	keyboardShortcutsDialog = new KeyboardShortcutsDialog();
+	functionsAndEquationsDialog = new FunctionsAndEquationsDialog();
+	unitsHelpDialog = new UnitsHelpDialog();
 	thirdPartyLicensesDialog = new ThirdPartyLicensesDialog();
 	licenseDialog = new LicenseDialog();
 	directoryDialog = new DirectoryDialog();
@@ -6330,7 +7111,20 @@ $(window).load(function () {
 	RunResults.updateProgressBar();
 	updateTimeUnitButton();
 
-	History.unsavedChanges = false;
+	// Establish a clean baseline for a fresh/new model. Restored models already
+	// carry their savedState through History.fromLocalStorage(). Keeping an XML
+	// baseline here also means the very first edit can be undone all the way
+	// back to the original clean model.
+	if (History.savedState == null) {
+		let baseline = createModelFileData();
+		if (History.undoStates.length === 0) History.forceCustomUndoState(baseline);
+		else {
+			History.savedState = baseline;
+			History.updateUnsavedState();
+		}
+	} else {
+		History.updateUnsavedState();
+	}
 	InfoBar.init();
 });
 
@@ -6438,7 +7232,7 @@ function export_txt(fileName, data) {
 function export_model() {
 	export_txt("a.txt", blankGraphTemplate);
 }
-var blankGraphTemplate = `<mxGraphModel>
+var blankGraphTemplate = `<SystemikaModel>
 <root>
 <mxCell id="0"/>
 <mxCell id="1" parent="0"/>
@@ -6447,13 +7241,13 @@ var blankGraphTemplate = `<mxGraphModel>
 <mxGeometry x="10" y="10" width="64" height="64" as="geometry"/>
 </mxCell>
 </Display>
-<Setting Note="" Version="36" TimeLength="100" TimeStart="0" TimeStep="1" TimeUnits="" StrictUnits="true" Units="" HiddenUIGroups="Validation,User Interface" SolutionAlgorithm="RK1" BackgroundColor="white" Throttle="-1" Macros="" SensitivityPrimitives="" SensitivityRuns="50" SensitivityBounds="50, 80, 95, 100" SensitivityShowRuns="false" article="{&quot;comments&quot;:true, &quot;facebookUID&quot;: &quot;&quot;}" StyleSheet="{}" id="2">
+<Setting Note="" Version="36" TimeLength="100" TimeStart="0" TimeStep="0.25" AdvanceBy="1" TimeUnits="" StrictUnits="true" Units="" HiddenUIGroups="Validation,User Interface" SolutionAlgorithm="RK1" BackgroundColor="white" Throttle="-1" Macros="" SensitivityPrimitives="" SensitivityRuns="50" SensitivityBounds="50, 80, 95, 100" SensitivityShowRuns="false" article="{&quot;comments&quot;:true, &quot;facebookUID&quot;: &quot;&quot;}" StyleSheet="{}" id="2">
 <mxCell parent="1" vertex="1" visible="0">
 <mxGeometry x="20" y="20" width="80" height="40" as="geometry"/>
 </mxCell>
 </Setting>
 </root>
-</mxGraphModel>`;
+</SystemikaModel>`;
 loadXML(blankGraphTemplate);
 
 function addMissingPrimitiveAttributes(prim) {
@@ -6757,12 +7551,16 @@ function syncAllVisuals() {
 				syncVisual(primitive_list[key]);
 			} catch (exception) {
 				removePrimitive(primitive_list[key]);
-				alert("Error while loading corrupted primitive of type " + type + ". Removing corrupted primitive to avoid propagated errors.");
+				alert("Error while loading a corrupted model entity of type " + type + ". Removing it to avoid propagated errors.");
 				//~ alert("Error while loading corrupted primitive of type "+type+". Removing corrupted primitive to avoid propagated errors. \n\nError happened at: "+exception.stack);
 				throw exception;
 			}
 		}
 	}
+	// Invalid half-connected Links are never part of a valid Systemika model.
+	// Remove any such legacy/corrupted records after loading or Undo restore so
+	// they cannot poison selection, Delete, or subsequent history operations.
+	cleanUnconnectedLinks();
 	update_all_objects();
 	unselect_all();
 }
@@ -6795,31 +7593,76 @@ class SubscribePool {
 
 class runOverlay {
 	static init() {
+		this.promptOpen = false;
 		$(document).ready(() => {
 			$("#svgBlockOverlay").mousedown(() => {
 				$("#svgBlockOverlay").css("opacity", 0.5);
 				yesNoAlert("Do you want to terminate the simulation now to change the model?", function (answer) {
 					$("#svgBlockOverlay").css("opacity", 0);
-					if (answer == "yes") {
-						RunResults.resetSimulation();
-					}
+					if (answer == "yes") RunResults.resetSimulation();
 				});
-
 			});
 		});
 	}
+
+	// Ask once before a state-changing action while an Advance simulation is
+	// paused. Read-only result exploration never calls this function.
+	static requestAdvanceTermination(message, afterTerminate) {
+		if (!RunResults.isAdvanceActive()) {
+			if (afterTerminate) afterTerminate();
+			return false;
+		}
+		if (this.promptOpen) return true;
+		this.promptOpen = true;
+		yesNoAlert(message || "The active Advance simulation must end before its compiled model structure can be changed.", (answer) => {
+			this.promptOpen = false;
+			if (answer === "yes") {
+				RunResults.stopSimulation();
+				if (afterTerminate) afterTerminate();
+			}
+		});
+		return true;
+	}
+
+	static clearModelEditShield() {
+		let shield = document.getElementById("simulationModelEditShield");
+		if (shield) shield.remove();
+		if (SVG.anchorLayer) SVG.anchorLayer.style.pointerEvents = "";
+	}
+
+	// Advance mode is intentionally different from a continuously running
+	// simulation. A transparent SVG shield sits above model primitives but
+	// below the plot/table layer contents. This protects the simulation state
+	// while leaving plots, tables, their scrollbars and dialogs interactive.
+	static blockModelEditing() {
+		unselect_all();
+		$("#svgBlockOverlay").hide();
+		this.clearModelEditShield();
+		// Keep ordinary mouse interaction and primitive property dialogs available
+		// during Advance. Structural creation/deletion tools are guarded separately
+		// by ToolBox. Anchors stay disabled because reconnecting flow/link endpoints
+		// would alter the compiled simulation topology mid-run.
+		if (SVG.anchorLayer) SVG.anchorLayer.style.pointerEvents = "none";
+	}
+
 	static block() {
 		unselect_all();
+		this.clearModelEditShield();
 		$("#svgBlockOverlay").show();
 	}
 	static unblock() {
 		$("#svgBlockOverlay").hide();
+		this.clearModelEditShield();
 	}
 }
 runOverlay.init();
 
 // Not yet implemented
 function setColorToSelection(color) {
+	let picker = typeof document !== "undefined" ? document.getElementById("toolbar-colour-picker") : null;
+	let colourButton = typeof document !== "undefined" ? document.getElementById("btn_colour") : null;
+	if (picker) picker.hidden = true;
+	if (colourButton) colourButton.setAttribute("aria-expanded", "false");
 	let objects = get_selected_objects();
 	for (let id in objects) {
 		let obj = get_object(id);
@@ -6897,6 +7740,32 @@ async function updateRecentsMenu() {
 	}
 }
 
+// Central output-device actions used by Clear, Reset, Finish and the Runs
+// manager. Clearing affects only rendered plot/table contents; it does not
+// delete display objects, run selections, or saved .sysrun files.
+const SystemikaOutputDevices = {
+	clearAll() {
+		let seen = new Set();
+		for (let collection of [object_array, connection_array]) {
+			for (let key in (collection || {})) {
+				let visual = collection[key];
+				if (!visual || seen.has(visual)) continue;
+				seen.add(visual);
+				if (typeof TableVisual !== "undefined" && visual instanceof TableVisual) {
+					if (visual.data) visual.data.results = [];
+					visual.updateHTML(`<div class="empty-plot-header">Table</div><div style="padding:8px;">No displayed results.</div>`);
+				} else if (typeof PlotVisual !== "undefined" && visual instanceof PlotVisual) {
+					if (typeof visual.setEmptyPlot === "function") visual.setEmptyPlot();
+				}
+			}
+		}
+	},
+	refreshAll() {
+		if (typeof RunResults !== "undefined") RunResults.triggerRunFinished();
+	}
+};
+if (typeof window !== "undefined") window.SystemikaOutputDevices = SystemikaOutputDevices;
+
 class RunResults {
 	/** @type {"none" | "running" | "stopped" | "stepping" | "paused"} */
 	static runState;
@@ -6928,6 +7797,16 @@ class RunResults {
 		this.updateFrequency = 100;
 		this.updateCounter = 0; // Updates everytime updateCounter goes down to zero
 		this.simulationTime = 0;
+		this.systemikaRunDecision = null;
+		this.systemikaAdvanceDecision = null;
+		this.lastSimulationStochastic = false;
+		this.lastSimulationRandomSeed = null;
+		this.advanceActive = false;
+		this.advanceFinishRequested = false;
+		this.advanceDisplaySelectionSnapshot = null;
+	}
+	static isAdvanceActive() {
+		return Boolean(this.advanceActive);
 	}
 	static createHeader() {
 		// Get list of primitives that we want to observe from the model
@@ -7039,6 +7918,7 @@ class RunResults {
 	static runSimulation() {
 		this.simulationDone = false;
 		this.stopSimulation();
+		if (window.systemikaSimulationData) systemikaSimulationData.clear();
 		$("#imgRunPauseTool").attr("src", "graphics/pause.svg");
 		this.createHeader();
 		if (getTimeLength() / getTimeStep() < 1000) {
@@ -7049,7 +7929,7 @@ class RunResults {
 		}
 		this.runState = "running";
     runOverlay.block();
-		this.simulationController = runModel({
+		this.simulationController = SystemikaEngine.runCurrentModel({
 			rate: -1,
 			ignoreUnits: this.ignoreUnits,
 			onPause: (res) => {
@@ -7075,18 +7955,44 @@ class RunResults {
 				// This is a hack to get around that
 				if (this.simulationDone === false) {
 					this.simulationDone = true;
+					this.lastSimulationStochastic = Boolean(res && res.stochastic);
+					this.lastSimulationRandomSeed = res && res.randomSeed != null ? res.randomSeed : null;
 					// In some cases onPause was never executed and in such cases we need to do store Result directly on res
 					this.storeResults(res);
 					this.updateProgressBar();
 					this.setProgressStatus(true);
+
+					// Capture before notifying plots/tables so the central data manager and
+					// the legacy RunResults view describe the same completed run. Saving is
+					// asynchronous and compressed in the Electron main process.
+					let runDecision = this.systemikaRunDecision;
+					this.systemikaRunDecision = null;
+					let savePromise = null;
+					if (window.SystemikaRunManager && runDecision) {
+						try {
+							savePromise = SystemikaRunManager.commitUserRun(runDecision);
+						} catch (error) {
+							console.error(error);
+						}
+					}
+
 					this.triggerRunFinished();
 					this.stopSimulation();
+
+					if (savePromise) {
+						savePromise.catch((error) => {
+							console.error(error);
+							xAlert(`The simulation completed, but Systemika could not save the run file.<br/><br/>${error.message || error}`);
+						});
+					}
 				} else {
 					console.log("Extra onSuccess call from IM-engine");
 				}
 			},
 			onError: (res) => {
+				if (res && res.error) xAlert(`Simulation error:<br/><br/>${htmlEscape(res.error)}`);
 				do_global_log("onError stop simulation");
+				this.systemikaRunDecision = null;
 				this.stopSimulation();
 			}
 		});
@@ -7100,44 +8006,111 @@ class RunResults {
 		this.simulationController.resume();
 	}
 	static stepSimulation() {
-		/* experiment
-		if (this.runState == "running") {
-			this.resetSimulation();
-			this.simulationController = null;
-			this.runState = "stepping";
+		// If Advance is already active, one click advances by the CURRENT Advance
+		// By setting. The engine itself pauses at one-time-unit checkpoints; we
+		// automatically pass intermediate checkpoints until this target is reached.
+		// This makes Advance By safely editable while a run is paused.
+		if (this.advanceActive) {
+			if (this.simulationController != null) {
+				let advanceBy = (typeof getAdvanceBy === "function") ? getAdvanceBy() : 1;
+				let endTime = Number(getTimeStart()) + Number(getTimeLength());
+				this.advanceTargetTime = Math.min(endTime, Number(this.simulationTime) + Number(advanceBy));
+				this.simulationController.resume();
+			}
 			return;
 		}
-		*/
-		// if stepping was already started
-		if (this.simulationController != null) {
-			this.simulationController.resume();
-			return;
-		}
-		// Else start the stepping
+		// Else start a new stepped simulation.
 		this.stopSimulation();
+		this.advanceActive = true;
+		this.advanceFinishRequested = false;
+		$("#btn_finish").prop("disabled", false);
+		if (window.systemikaSimulationData) systemikaSimulationData.clear();
 		this.createHeader();
-		//~ alert("stepping init");
-		setPauseInterval(getTimeStep());
-		runOverlay.block();
-		runModel({
+		// Use stable one-time-unit engine checkpoints. Advance By is implemented
+		// above these checkpoints so users can change it between Advance clicks
+		// without restarting or recompiling the active simulation.
+		setPauseInterval(1);
+		this.advanceTargetTime = Math.min(
+			Number(getTimeStart()) + Number(getTimeLength()),
+			Number(getTimeStart()) + Number((typeof getAdvanceBy === "function") ? getAdvanceBy() : 1)
+		);
+		// Remember exactly what every output device was showing before Advance
+		// temporarily selects the stepped run. Reset restores this snapshot.
+		this.advanceDisplaySelectionSnapshot = (window.SystemikaDisplayRuns && typeof window.SystemikaDisplayRuns.captureSelections === "function")
+			? window.SystemikaDisplayRuns.captureSelections()
+			: null;
+		// A newly started Advance run should become the active display source in
+		// the same way as an ordinary Run. This ensures existing plots/tables and
+		// newly created comparison displays default to the stepped run label
+		// (Base, Run 1, ...) rather than remaining on an older saved run. The
+		// actual partial data is pushed into the live run store on every pause.
+		if (window.SystemikaRunManager && window.SystemikaDisplayRuns && typeof window.SystemikaDisplayRuns.selectNewRun === "function") {
+			let advanceRunName = SystemikaRunManager.getRunName();
+			if (advanceRunName) {
+				// Register a zero-row live run before changing display selections. The
+				// run-list UI refreshes immediately when the selection changes; without
+				// this placeholder it can mistake the new Advance label for a deleted
+				// run and prune it before the first pause produces data.
+				SystemikaRunManager.captureLiveRun(advanceRunName, true);
+				window.SystemikaDisplayRuns.selectNewRun(advanceRunName);
+			}
+		}
+		runOverlay.blockModelEditing();
+		this.simulationController = SystemikaEngine.runCurrentModel({
 			ignoreUnits: this.ignoreUnits,
 			onPause: (res) => {
 				this.simulationDone = false;
 				this.storeResults(res);
 				this.updateProgressBar();
 				this.setProgressStatus(false);
+				// Keep the central run store synchronized with partial stepping data
+				// before notifying plots/tables. This makes every Advance click visible
+				// immediately while keeping disk persistence reserved for completed runs.
+				if (window.SystemikaRunManager) SystemikaRunManager.captureLiveRun();
 				this.triggerRunFinished();
 				this.simulationController = res;
+				if (this.advanceFinishRequested && res && typeof res.resume === "function") {
+					res.resume();
+				} else if (res && typeof res.resume === "function" && Number(this.simulationTime) + 1e-10 < Number(this.advanceTargetTime)) {
+					// Continue through internal one-unit checkpoints until the user-requested
+					// Advance By target has been reached. Plots/tables still refresh at each
+					// checkpoint, keeping the interactive trajectory observable.
+					res.resume();
+				}
 			},
 			onSuccess: (res) => {
 				this.simulationDone = true;
+				this.advanceActive = false;
+				this.advanceFinishRequested = false;
+				$("#btn_finish").prop("disabled", true);
 				runOverlay.unblock();
 				this.storeResults(res);
 				this.updateProgressBar();
 				this.setProgressStatus(true);
+				let decision = this.systemikaAdvanceDecision;
+				this.systemikaAdvanceDecision = null;
+				// Completion makes the Advance run a real run, so keep its automatic
+				// selection and discard the pre-Advance restoration snapshot.
+				this.advanceDisplaySelectionSnapshot = null;
+				let savePromise = null;
+				if (window.SystemikaRunManager && decision) {
+					savePromise = SystemikaRunManager.commitUserRun(decision);
+				} else if (window.SystemikaRunManager) {
+					SystemikaRunManager.captureLiveRun();
+				}
 				this.triggerRunFinished();
+				if (savePromise) savePromise.catch(error => {
+					console.error(error);
+					xAlert(`The Advance simulation completed, but Systemika could not save the run file.<br/><br/>${htmlEscape(error.message || String(error))}`);
+				});
 			},
 			onError: (res) => {
+				if (res && res.error) xAlert(`Simulation error:<br/><br/>${htmlEscape(res.error)}`);
+				this.systemikaAdvanceDecision = null;
+				if (this.advanceDisplaySelectionSnapshot && window.SystemikaDisplayRuns && typeof window.SystemikaDisplayRuns.restoreSelections === "function") {
+					window.SystemikaDisplayRuns.restoreSelections(this.advanceDisplaySelectionSnapshot, window.SystemikaRunManager ? SystemikaRunManager.getRunName() : "");
+				}
+				this.advanceDisplaySelectionSnapshot = null;
 				this.stopSimulation();
 			}
 		});
@@ -7148,12 +8121,17 @@ class RunResults {
 			: $("#progress-bar").removeAttr("data-done")
 	}
 	static updateProgressLength() {
-		let progress = clampValue(this.getRunProgressFraction(), 0, 1);
+		// Completion callbacks are authoritative. In particular, Advance to End can
+		// reach onSuccess before the final sampled row has propagated through every
+		// display helper, so do not let a stale last-row time leave the green bar
+		// visibly short of 100%.
+		let progress = this.simulationDone ? 1 : clampValue(this.getRunProgressFraction(), 0, 1);
 		$("#progress-bar")[0].style.setProperty("--progress", `${100 * progress}%`)
 	}
 	static updateProgressText() {
 		let number_options = { precision: 3 };
-		let currentTime = format_number(this.getRunProgress(), number_options);
+		let currentProgress = this.simulationDone ? this.getRunProgressMax() : this.getRunProgress();
+		let currentTime = format_number(currentProgress, number_options);
 		let startTime = format_number(this.getRunProgressMin(), number_options);
 		let endTime = format_number(this.getRunProgressMax(), number_options);
 		let timeStep = this.getTimeStep();
@@ -7169,17 +8147,97 @@ class RunResults {
 		$("#imgRunPauseTool").attr("src", "graphics/run.svg");
 	}
 	static resetSimulation() {
+		this.simulationDone = false;
+		// Reset discards only the unfinished Advance trajectory. Other saved runs
+		// selected in Compare Plots/Tables must remain visible. If this Advance
+		// was going to overwrite an existing saved run, restore that saved package
+		// after discarding the transient in-memory version.
+		let wasAdvance = Boolean(this.advanceActive || this.systemikaAdvanceDecision);
+		let decision = this.systemikaAdvanceDecision;
+		let current = window.systemikaSimulationData ? systemikaSimulationData.getCurrentRun() : null;
+		let currentRunName = String((current && current.runName) || (decision && decision.runName) || "").trim();
+		let restoreSavedRun = Boolean(decision && decision.persist && decision.overwrite && currentRunName);
+		let displaySelectionSnapshot = this.advanceDisplaySelectionSnapshot;
+		this.advanceDisplaySelectionSnapshot = null;
+		this.systemikaAdvanceDecision = null;
 		this.stopSimulation();
+		if (window.systemikaSimulationData) {
+			if (typeof systemikaSimulationData.discardCurrentRun === "function") systemikaSimulationData.discardCurrentRun();
+			else systemikaSimulationData.clear();
+		}
 		this.createHeader();
 		this.updateProgressBar();
-		this.triggerRunFinished();
+
+		// Outside Advance (for example model load/new-model initialization), keep
+		// the traditional reset behavior. The selective run cleanup below is only
+		// for an unfinished stepped trajectory.
+		if (!wasAdvance) {
+			SystemikaOutputDevices.clearAll();
+			return;
+		}
+
+		// Restore the exact pre-Advance selections first. This is essential for
+		// ordinary plots, whose single RunName was temporarily replaced by the
+		// Advance label when stepping began.
+		if (displaySelectionSnapshot && window.SystemikaDisplayRuns && typeof window.SystemikaDisplayRuns.restoreSelections === "function") {
+			window.SystemikaDisplayRuns.restoreSelections(displaySelectionSnapshot, currentRunName);
+		} else if (currentRunName) {
+			// Compatibility fallback for sessions created before selection snapshots.
+			removeRunFromDisplaySelections(currentRunName);
+		}
+
+		let refresh = () => SystemikaOutputDevices.refreshAll();
+		if (restoreSavedRun && window.systemikaSimulationData && systemikaSimulationData.persistenceAvailable()) {
+			// Keep the label selected because a valid saved run with that label still
+			// exists. Reload it so displays immediately fall back to the pre-Advance
+			// data rather than the discarded partial trajectory.
+			systemikaSimulationData.ensureRunLoaded(currentRunName)
+				.then(refresh)
+				.catch((error) => {
+					console.error(error);
+					removeRunFromDisplaySelections(currentRunName);
+					refresh();
+				});
+		} else {
+			refresh();
+		}
+	}
+	static finishAdvanceSimulation() {
+		if (!this.advanceActive) return;
+		this.advanceFinishRequested = true;
+		if (this.simulationController && typeof this.simulationController.resume === "function") {
+			this.simulationController.resume();
+		}
+	}
+	static applyAdvanceParameterChange(primitive, value) {
+		if (!this.advanceActive) return { applied: false, reason: "not-advance" };
+		if (!this.simulationController || typeof this.simulationController.setValue !== "function") {
+			return { applied: false, reason: "controller-unavailable" };
+		}
+		try {
+			// The simulation engine itself exposes setValue() specifically for
+			// interactive paused simulations. Do not second-guess that API with a
+			// narrow UI type whitelist: imported/legacy models do not always mark
+			// parameter Variables with isConstant=true. The engine validates the
+			// proposed expression and rejects values that cannot be changed safely
+			// during the active trajectory (for example state-dependent equations).
+			this.simulationController.setValue(primitive, value);
+			return { applied: true };
+		} catch (error) {
+			return { applied: false, reason: "runtime-error", error };
+		}
 	}
 	static stopSimulation() {
+		this.advanceActive = false;
+		this.advanceFinishRequested = false;
 		runOverlay.unblock();
-		endRunningSimulation();
+		if (this.simulationController && typeof this.simulationController.terminate === "function") {
+			this.simulationController.terminate();
+		}
 		this.runState = "stopped";
 		this.simulationController = null;
 		$("#imgRunPauseTool").attr("src", "graphics/run.svg");
+		$("#btn_finish").prop("disabled", true);
 		this.updateCounter = 0;
 	}
 	static subscribeRun(id, handler) {
@@ -7188,8 +8246,9 @@ class RunResults {
 	static push(newRow) {
 		this.results.push(newRow);
 	}
-	static getResults() {
-		return this.results;
+	static getResults(runName) {
+		let storedRun = window.systemikaSimulationData ? systemikaSimulationData.getRun(runName) : null;
+		return storedRun ? storedRun.rows : this.results;
 	}
 	static getLastValue(primitiveId) {
 		let lastRow = this.getLastRow();
@@ -7197,16 +8256,43 @@ class RunResults {
 			//~ alert("early return");
 			return null;
 		}
-		let varIdIndex = this.varIdList.indexOf(Number(primitiveId));
-		return lastRow[varIdIndex];
+		let storedRun = window.systemikaSimulationData ? systemikaSimulationData.getCurrentRun() : null;
+		let ids = storedRun && storedRun.ids && storedRun.ids.length ? storedRun.ids : this.varIdList;
+		let varIdIndex = ids.indexOf(Number(primitiveId));
+		return varIdIndex === -1 ? null : lastRow[varIdIndex];
 	}
-	static getTimeStep() {
+	static getTimeStep(runName) {
+		if (window.systemikaSimulationData) {
+			let storedStep = systemikaSimulationData.getRunTimeStep(runName);
+			if (storedStep != null && Number.isFinite(Number(storedStep))) return Number(storedStep);
+		}
 		if (primitives("Setting")[0]) {
 			return primitives("Setting")[0].getAttribute("TimeStep");
 		} else if (this.results && 1 < this.results.length) {
 			return `${this.results[1][0] - this.results[0][0]}`;
 		}
 		return "0";
+	}
+	static getDataTimeStart(runName) {
+		if (window.systemikaSimulationData) {
+			let value = systemikaSimulationData.getRunTimeStart(runName);
+			if (value != null && Number.isFinite(Number(value))) return Number(value);
+		}
+		return getTimeStart();
+	}
+	static getDataTimeLength(runName) {
+		if (window.systemikaSimulationData) {
+			let value = systemikaSimulationData.getRunTimeLength(runName);
+			if (value != null && Number.isFinite(Number(value))) return Number(value);
+		}
+		return getTimeLength();
+	}
+	static getDataTimeUnits(runName) {
+		if (window.systemikaSimulationData) {
+			let value = systemikaSimulationData.getRunTimeUnits(runName);
+			if (value != null) return value;
+		}
+		return getTimeUnits();
 	}
 	static getRunProgress() {
 		let lastRow = this.getLastRow();
@@ -7227,14 +8313,22 @@ class RunResults {
 		return getTimeStart();
 	}
 	static getLastRow() {
-		//~ alert(this.results.length);
-		if (this.results.length != 0) {
-			return this.results[this.results.length - 1];
+		let rows = this.getResults();
+		if (rows.length != 0) {
+			return rows[rows.length - 1];
 		} else {
 			return null;
 		}
 	}
-	static getSelectiveIdResults(varIdList) {
+	static getSelectiveIdResults(varIdList, runName) {
+		if (window.systemikaSimulationData) {
+			let storedResults = systemikaSimulationData.getSelectiveIdResults(varIdList, runName);
+			if (storedResults) return storedResults;
+			// A named saved run must never silently fall back to the latest live
+			// simulation while it is still loading or if it cannot be found.
+			if (runName) return [];
+		}
+
 		// Make sure the varIdList stored as numbers and not strings
 		varIdList = varIdList.map(Number);
 
@@ -7260,10 +8354,10 @@ class RunResults {
 		}
 		return returnResults;
 	}
-	static getFilteredSelectiveIdResults(varIdList, start, length, step) {
-		let unfilteredResults = this.getSelectiveIdResults(varIdList);
+	static getFilteredSelectiveIdResults(varIdList, start, length, step, runName) {
+		let unfilteredResults = this.getSelectiveIdResults(varIdList, runName);
 		let filteredResults = [];
-		let printInterval = step / getTimeStep();
+		let printInterval = step / this.getTimeStep(runName);
 		let printCounter = 1;
 
 		for (let row_index in unfilteredResults) {
@@ -7439,7 +8533,8 @@ class jqDialog {
 	}
 
 	applyChanges() {
-		this.makeApply();
+		let applyResult = this.makeApply();
+		if (applyResult === false) return;
 		$(this.dialog).dialog('close');
 		// We add a delay to make sure we closed first
 
@@ -7551,6 +8646,164 @@ function xAlert(message, closeHandler) {
 	dialog.show();
 }
 
+// Browser-native alert() dialogs can become non-interactive inside Electron's
+// nested editor frame on some Linux window managers. Route ordinary alerts
+// through the same in-app jQuery UI dialog used elsewhere in Systemika. Keep
+// the original function only for debugging/fallback inspection.
+if (typeof window !== "undefined" && !window.__systemikaNativeAlert) {
+	try {
+		window.__systemikaNativeAlert = typeof window.alert === "function" ? window.alert.bind(window) : null;
+		window.alert = (message) => {
+			let text = String(message == null ? "" : message);
+			let safe = (typeof htmlEscape === "function" ? htmlEscape(text) : text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"));
+			xAlert(safe.replace(/\r?\n/g, "<br/>"));
+		};
+	} catch (error) {
+		console.warn("Unable to install Systemika in-app alert handler", error);
+	}
+}
+
+class GhostSourceDialog extends jqDialog {
+	constructor(x, y) {
+		super();
+		this.x = x;
+		this.y = y;
+		this.setTitle("Select Ghost Source");
+	}
+	getCandidates() {
+		if (typeof getPrimitiveList !== "function") return [];
+		let typeLabels = {
+			stock: "Stock",
+			flow: "Flow",
+			variable: "Auxiliary",
+			constant: "Constant",
+			converter: "Lookup"
+		};
+		return getPrimitiveList().map(primitive => {
+			let id = String(getID(primitive));
+			let object = get_object(id);
+			let objectType = object && object.type ? String(object.type).toLowerCase() : String(getTypeNew(primitive) || "").toLowerCase();
+			return {
+				id,
+				name: String(getName(primitive) || id),
+				type: objectType,
+				typeLabel: typeLabels[objectType] || String(getTypeNew(primitive) || objectType)
+			};
+		}).filter(item => GhostTool.ghostable_primitives.includes(item.type))
+			.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+	}
+	ghostOptionsHtml(candidates) {
+		return candidates.map(item => `<option value="${htmlEscape(item.id)}">${htmlEscape(item.name)} — ${htmlEscape(item.typeLabel)}</option>`).join("");
+	}
+	filterCandidates() {
+		let query = String($(this.dialogContent).find(".ghost-source-filter").val() || "").trim().toLowerCase();
+		let filtered = this.candidates.filter(item => !query || item.name.toLowerCase().includes(query) || item.typeLabel.toLowerCase().includes(query));
+		let select = $(this.dialogContent).find(".ghost-source-select");
+		select.html(this.ghostOptionsHtml(filtered));
+		select.prop("disabled", filtered.length === 0);
+		if (filtered.length) select.prop("selectedIndex", 0);
+		$(this.dialogContent).find(".ghost-source-count").text(filtered.length === this.candidates.length
+			? `${filtered.length} item${filtered.length === 1 ? "" : "s"}`
+			: `${filtered.length} of ${this.candidates.length} items`);
+		$(this.dialogContent).find(".ghost-source-warning").empty();
+	}
+	beforeShow() {
+		this.candidates = this.getCandidates();
+		this.setHtml(`
+			<div style="min-width:400px; max-width:580px;">
+				<div style="margin-bottom:6px;">Select the model item to show as a Ghost:</div>
+				<input class="ghost-source-filter" type="search" placeholder="Search model entities…" autocomplete="off" spellcheck="false" style="width:100%; box-sizing:border-box; margin-bottom:6px;"/>
+				${this.candidates.length ? `<select class="ghost-source-select" size="12" style="width:100%; box-sizing:border-box;">${this.ghostOptionsHtml(this.candidates)}</select>` : `<div class="ghost-source-empty">There are no ghostable model items.</div>`}
+				<div class="ghost-source-count" style="font-size:0.85em; color:#666; margin-top:4px;"></div>
+				<div class="ghost-source-warning" style="margin-top:6px;"></div>
+			</div>`);
+		let select = $(this.dialogContent).find(".ghost-source-select");
+		if (select.length) {
+			select.prop("selectedIndex", 0);
+			select.dblclick(() => this.createGhost());
+			select.keydown(event => {
+				if (event.key === "Enter") { event.preventDefault(); this.createGhost(); }
+			});
+			let filter = $(this.dialogContent).find(".ghost-source-filter");
+			filter.on("input", () => this.filterCandidates());
+			filter.keydown(event => {
+				if (event.key === "ArrowDown") { event.preventDefault(); select.focus(); }
+				if (event.key === "Enter" && select.find("option").length === 1) { event.preventDefault(); this.createGhost(); }
+			});
+			this.filterCandidates();
+			setTimeout(() => filter.focus(), 0);
+		}
+	}
+	createGhost() {
+		let select = $(this.dialogContent).find(".ghost-source-select");
+		let id = String(select.val() || "");
+		if (!id) {
+			$(this.dialogContent).find(".ghost-source-warning").html(warningHtml("Select an item first.", true));
+			return;
+		}
+		let source = findID(id);
+		if (!source) {
+			$(this.dialogContent).find(".ghost-source-warning").html(warningHtml("The selected item no longer exists.", true));
+			return;
+		}
+		let ghost = GhostTool.createFromSource(source, this.x, this.y);
+		if (!ghost) return;
+		$(this.dialog).dialog("close");
+		update_relevant_objects([]);
+		InfoBar.update();
+		History.storeUndoState();
+	}
+	beforeCreateDialog() {
+		this.dialogParameters.buttons = {
+			"Cancel": () => $(this.dialog).dialog("close"),
+			"Create Ghost": () => this.createGhost()
+		};
+	}
+}
+
+class XPromptDialog extends jqDialog {
+	constructor(message, defaultValue, closeHandler) {
+		super();
+		this.setTitle("Input");
+		this.message = String(message == null ? "" : message);
+		this.defaultValue = defaultValue == null ? "" : String(defaultValue);
+		this.closeHandler = closeHandler;
+		this.result = null;
+	}
+	beforeShow() {
+		this.setHtml(`<div style="min-width:320px; max-width:520px;">
+			<div style="margin-bottom:8px;">${htmlEscape(this.message)}</div>
+			<input class="systemika-prompt-input" type="text" style="width:100%; box-sizing:border-box;" value="${htmlEscape(this.defaultValue)}"/>
+		</div>`);
+		let input = $(this.dialogContent).find(".systemika-prompt-input");
+		input.keydown(event => {
+			if (event.key === "Enter") { event.preventDefault(); this.accept(); }
+		});
+	}
+	afterShow() {
+		setTimeout(() => $(this.dialogContent).find(".systemika-prompt-input").focus().select(), 0);
+	}
+	accept() {
+		this.result = String($(this.dialogContent).find(".systemika-prompt-input").val() || "");
+		$(this.dialog).dialog("close");
+	}
+	afterClose() {
+		if (this.closeHandler) this.closeHandler(this.result);
+	}
+	beforeCreateDialog() {
+		this.dialogParameters.buttons = {
+			"Cancel": () => { this.result = null; $(this.dialog).dialog("close"); },
+			"OK": () => this.accept()
+		};
+	}
+}
+
+function xPrompt(message, defaultValue, closeHandler) {
+	let dialog = new XPromptDialog(message, defaultValue, closeHandler);
+	dialog.show();
+}
+if (typeof window !== "undefined") window.xPrompt = xPrompt;
+
 class YesNoDialog extends jqDialog {
 	constructor(message, closeHandler) {
 		super();
@@ -7616,6 +8869,153 @@ class YesNoCancelDialog extends jqDialog {
 }
 function yesNoCancelAlert(message, closeHandler) {
 	let dialog = new YesNoCancelDialog(message, closeHandler);
+	dialog.show();
+}
+
+class SystemikaRunsManagerDialog extends jqDialog {
+	constructor() {
+		super();
+		this.setTitle("Manage Runs");
+		this.selectedRun = "";
+		this.setHtml(`
+			<div class="systemika-runs-manager">
+				<div style="margin-bottom:0.6rem;">Saved simulation runs for the current model.</div>
+				<div class="systemika-runs-manager-list" style="min-width:520px; max-height:300px; overflow:auto; border:1px solid #bbb;"></div>
+				<div style="display:flex; gap:0.5rem; align-items:center; margin-top:0.75rem;">
+					<label for="systemika-runs-manager-name"><b>Name:</b></label>
+					<input id="systemika-runs-manager-name" type="text" style="flex:1; min-width:220px;" autocomplete="off" />
+				</div>
+				<div class="systemika-runs-manager-status" style="min-height:1.4em; margin-top:0.5rem;"></div>
+			</div>`);
+		this.nameInput = $(this.dialogContent).find("#systemika-runs-manager-name");
+	}
+	beforeCreateDialog() {
+		this.dialogParameters.buttons = {
+			"Rename": () => this.renameSelected(),
+			"Duplicate": () => this.duplicateSelected(),
+			"Delete": () => this.deleteSelected(),
+			"Close": () => $(this.dialog).dialog('close')
+		};
+	}
+	async afterShow() {
+		await this.reload();
+	}
+	afterClose() {
+		// Management operations can change which package a display resolves to.
+		// Closing the panel is the synchronization point requested by the UI: all
+		// figures/tables re-resolve their selected run(s) and redraw.
+		SystemikaOutputDevices.refreshAll();
+	}
+	status(message, isError = false) {
+		let node = $(this.dialogContent).find(".systemika-runs-manager-status");
+		node.text(message || "");
+		node.css("color", isError ? "#b00020" : "");
+	}
+	async reload() {
+		let list = $(this.dialogContent).find(".systemika-runs-manager-list");
+		this.status("Loading runs…");
+		try {
+			let runs = await systemikaSimulationData.listRuns();
+			if (!runs.length) {
+				list.html(`<div style="padding:0.75rem;">No saved runs.</div>`);
+				this.selectedRun = "";
+				this.nameInput.val("");
+				this.status("");
+				return;
+			}
+			list.html(`<table class="modern-table zebra" style="width:100%;">
+				<thead><tr><th></th><th>Run</th><th>Modified</th><th>Size</th></tr></thead>
+				<tbody>${runs.map((run, index) => {
+					let bytes = Number(run.bytes || 0);
+					let size = bytes < 1024 ? `${bytes} B` : bytes < 1024*1024 ? `${(bytes/1024).toFixed(1)} KB` : `${(bytes/1024/1024).toFixed(1)} MB`;
+					let modified = run.modified ? new Date(run.modified).toLocaleString() : "";
+					return `<tr class="systemika-run-row" data-run="${htmlEscape(run.runName)}">
+						<td><input type="radio" name="systemika-run-manager-choice" ${index===0 ? "checked" : ""}></td>
+						<td>${htmlEscape(run.runName)}</td><td>${htmlEscape(modified)}</td><td>${htmlEscape(size)}</td>
+					</tr>`;
+				}).join("")}</tbody></table>`);
+			let choose = (row) => {
+				let name = String($(row).data("run") || "");
+				this.selectedRun = name;
+				this.nameInput.val(name);
+				$(row).find('input[type="radio"]').prop("checked", true);
+			};
+			list.find(".systemika-run-row").on("click", function() { choose(this); });
+			choose(list.find(".systemika-run-row").get(0));
+			this.status("");
+		} catch (error) {
+			console.error(error);
+			this.status(error.message || String(error), true);
+		}
+	}
+	targetName(defaultSuffix = "") {
+		let value = String(this.nameInput.val() || "").trim();
+		if (defaultSuffix && (!value || value === this.selectedRun)) value = `${this.selectedRun}${defaultSuffix}`;
+		return value;
+	}
+	async renameSelected() {
+		if (!this.selectedRun) return this.status("Select a run first.", true);
+		let target = this.targetName();
+		if (!target || target === this.selectedRun) return this.status("Enter a different run name.", true);
+		try {
+			this.status("Renaming…");
+			await systemikaSimulationData.renameRun(this.selectedRun, target);
+			renameRunInDisplaySelections(this.selectedRun, target);
+			this.selectedRun = target;
+			await this.reload();
+		} catch (error) { this.status(error.message || String(error), true); }
+	}
+	async duplicateSelected() {
+		if (!this.selectedRun) return this.status("Select a run first.", true);
+		let target = this.targetName(" Copy");
+		if (!target || target === this.selectedRun) target = `${this.selectedRun} Copy`;
+		try {
+			this.status("Duplicating…");
+			await systemikaSimulationData.duplicateRun(this.selectedRun, target);
+			notifySystemikaRunsChanged({ action: "duplicate", sourceName: this.selectedRun, runName: target });
+			await this.reload();
+		} catch (error) { this.status(error.message || String(error), true); }
+	}
+	deleteSelected() {
+		if (!this.selectedRun) return this.status("Select a run first.", true);
+		let doomed = this.selectedRun;
+		yesNoAlert(`Delete saved run <b>${htmlEscape(doomed)}</b>?`, async (answer) => {
+			if (answer !== "yes") return;
+			try {
+				this.status("Deleting…");
+				await systemikaSimulationData.deleteRun(doomed);
+				removeRunFromDisplaySelections(doomed);
+				SystemikaOutputDevices.refreshAll();
+				this.selectedRun = "";
+				await this.reload();
+			} catch (error) { this.status(error.message || String(error), true); }
+		});
+	}
+}
+
+let systemikaRunsManagerDialog = null;
+function openSystemikaRunsManager() {
+	if (!systemikaRunsManagerDialog) systemikaRunsManagerDialog = new SystemikaRunsManagerDialog();
+	if (!systemikaRunsManagerDialog.visible) systemikaRunsManagerDialog.show();
+}
+if (typeof window !== "undefined") window.openSystemikaRunsManager = openSystemikaRunsManager;
+
+class UnsavedSaveChoiceDialog extends jqDialog {
+	constructor() {
+		super();
+		this.setTitle("Unsaved Changes");
+		this.setHtml("Choose how to save the current model.");
+	}
+	beforeCreateDialog() {
+		this.dialogParameters.buttons = {
+			"Save": () => { $(this.dialog).dialog("close"); fileManager.saveModel(); },
+			"Save As...": () => { $(this.dialog).dialog("close"); fileManager.saveModelAs(); },
+			"Cancel": () => $(this.dialog).dialog("close")
+		};
+	}
+}
+function showUnsavedSaveChoice() {
+	let dialog = new UnsavedSaveChoiceDialog();
 	dialog.show();
 }
 
@@ -7794,7 +9194,7 @@ class PrimitiveSelectorComponent extends HtmlComponent {
 		return (`<table id=${this.componentId} class="primitive-selector">
 			<tr>
 				<th></th>
-				<th>Added Primitives</td>
+				<th>Added Model Entities</td>
 			</tr>
 			${this.displayIds.map(id => {
 			const primitive = findID(id)
@@ -7824,7 +9224,7 @@ class PrimitiveSelectorComponent extends HtmlComponent {
 		</table>`);
 	}
 	updateIncludedList() {
-		let htmlContent = "No primitives selected";
+		let htmlContent = "No model entities selected";
 		if (this.displayIds.length > 0) {
 			htmlContent = this.renderIncludedList();
 		}
@@ -7868,7 +9268,7 @@ class PrimitiveSelectorComponent extends HtmlComponent {
 						<td style="padding: 0;">
 							<button class="primitive-add-button enter-apply" data-id="${getID(p)}"
 								${limitReached ? "disabled" : ""}
-								${limitReached ? `title="Max ${this.displayLimit} primitives selected"` : ""}>
+								${limitReached ? `title="Max ${this.displayLimit} model entities selected"` : ""}>
 								+
 							</button>
 						</td>
@@ -7884,9 +9284,9 @@ class PrimitiveSelectorComponent extends HtmlComponent {
 				`}).join("")}
 			</table>`);
 		} else if (searchLowercase === "") {
-			htmlContent = (`<div>No more primitives to add.</div>`);
+			htmlContent = (`<div>No more model entities to add.</div>`);
 		} else {
-			htmlContent = (noteHtml(`No primitive matches search: <br/><b>${searchWord}</b>`));
+			htmlContent = (noteHtml(`No model entity matches search: <br/><b>${searchWord}</b>`));
 		}
 		this.find(".excluded-list-div").html(htmlContent);
 		this.parent.bindEnterApplyEvents();
@@ -7909,7 +9309,7 @@ class PrimitiveSelectorComponent extends HtmlComponent {
 			<div class="vertical-space"></div>
 			<div class="center-vertically-container">
 				<img style="height: 22px; padding: 0px 5px;" src="graphics/exchange.svg"/>
-				<input type="text" class="primitive-filter-input enter-apply" placeholder="Find Primitive ..." style="height: 18px; width: 220px;">
+				<input type="text" class="primitive-filter-input enter-apply" placeholder="Find Model Entity ..." style="height: 18px; width: 220px;">
 			</div>
 			<div class="excluded-list-div" style="max-height: 300px; overflow: auto; border: 1px solid black;"></div>
 		`);
@@ -8002,6 +9402,575 @@ class LineOptionsComponent extends HtmlComponent {
 }
 
 
+// Persistent run selected by an individual plot/table. An empty RunName
+// means "use the current/latest simulation in memory".
+function getDisplayRunName(primitive) {
+	if (!primitive) return "";
+	return String(primitive.getAttribute("RunName") || "").trim();
+}
+
+// The live/current source remains represented internally by an empty run name,
+// but users see only its real run label (Base, Run 1, ...). This avoids the
+// redundant "Current / latest (Base)" entry while retaining the ability to
+// distinguish live stepping data from persisted packages internally.
+function getCurrentRunSourceName() {
+	let current = window.systemikaSimulationData ? systemikaSimulationData.getCurrentRun() : null;
+	if (current && current.runName) return String(current.runName);
+	if (RunResults && RunResults.results && RunResults.results.length && window.SystemikaRunManager) {
+		return String(SystemikaRunManager.getRunName() || "Base");
+	}
+	return "";
+}
+
+function hasCurrentRunSource() {
+	if (window.systemikaSimulationData && systemikaSimulationData.getCurrentRun()) return true;
+	return Boolean(RunResults && RunResults.results && RunResults.results.length);
+}
+
+// Multi-run displays can intentionally read several run
+// datasets at once. An empty string is the special "current/latest" source;
+// named strings refer to persisted .sysrun files. RunNames is JSON so labels
+// can safely contain spaces and punctuation. Old models with only RunName are
+// migrated lazily the first time they are opened.
+function getCompareRunNames(primitive) {
+	if (!primitive) return [""];
+	let raw = String(primitive.getAttribute("RunNames") || "").trim();
+	if (raw) {
+		try {
+			let parsed = JSON.parse(raw);
+			if (Array.isArray(parsed)) {
+				let unique = [];
+				for (let value of parsed) {
+					let name = String(value == null ? "" : value).trim();
+					if (!unique.includes(name)) unique.push(name);
+				}
+				if (unique.length) return unique;
+			}
+		} catch (error) {
+			console.warn("Invalid Compare Plot RunNames attribute", error);
+		}
+	}
+	let legacy = getDisplayRunName(primitive);
+	return [legacy];
+}
+
+function setCompareRunNames(primitive, names) {
+	if (!primitive) return;
+	let unique = [];
+	for (let value of (Array.isArray(names) ? names : [])) {
+		let name = String(value == null ? "" : value).trim();
+		if (!unique.includes(name)) unique.push(name);
+	}
+	primitive.setAttribute("RunNames", JSON.stringify(unique));
+	// Multi-run displays no longer use the single-run attribute. Clearing it avoids
+	// old single-run code accidentally overriding the multi-selection.
+	primitive.setAttribute("RunName", "");
+}
+
+function initializeMultiRunSelection(primitive) {
+	if (!primitive) return;
+	let raw = String(primitive.getAttribute("RunNames") || "").trim();
+	let legacy = getDisplayRunName(primitive);
+	if (raw || legacy) return;
+	let currentName = hasCurrentRunSource() ? getCurrentRunSourceName() : "";
+	if (currentName) setCompareRunNames(primitive, [currentName]);
+}
+
+// A newly completed named run becomes the active source for ordinary plots and
+// is appended to multi-run displays (Compare Plot and Table). Existing
+// comparison selections are preserved, so running Policy A after Base
+// automatically produces a Base + Policy A comparison rather than requiring
+// users to reopen every display and tick the new run manually.
+function notifySystemikaRunsChanged(detail = {}) {
+	if (typeof window === "undefined" || typeof window.dispatchEvent !== "function" || typeof CustomEvent !== "function") return;
+	window.dispatchEvent(new CustomEvent("systemika:runs-changed", { detail }));
+}
+
+function renameRunInDisplaySelections(oldName, newName) {
+	if (typeof primitives !== "function") return;
+	let from = String(oldName || "");
+	let to = String(newName || "");
+	for (let type of ["TimePlot"]) {
+		for (let primitive of (primitives(type) || [])) {
+			if (getDisplayRunName(primitive) === from) primitive.setAttribute("RunName", to);
+		}
+	}
+	for (let type of ["ComparePlot", "Table", "XyPlot", "HistoPlot"]) {
+		for (let primitive of (primitives(type) || [])) {
+			setCompareRunNames(primitive, getCompareRunNames(primitive).map(name => name === from ? to : name));
+		}
+	}
+	notifySystemikaRunsChanged({ action: "rename", oldName: from, newName: to });
+}
+
+function removeRunFromDisplaySelections(runName) {
+	if (typeof primitives !== "function") return;
+	let doomed = String(runName || "");
+	for (let type of ["TimePlot"]) {
+		for (let primitive of (primitives(type) || [])) {
+			if (getDisplayRunName(primitive) === doomed) primitive.setAttribute("RunName", "");
+		}
+	}
+	for (let type of ["ComparePlot", "Table", "XyPlot", "HistoPlot"]) {
+		for (let primitive of (primitives(type) || [])) {
+			setCompareRunNames(primitive, getCompareRunNames(primitive).filter(name => name !== doomed));
+		}
+	}
+	notifySystemikaRunsChanged({ action: "remove", runName: doomed });
+}
+
+// Preserve display run selections while an Advance run temporarily becomes
+// the active source. Reset restores this snapshot so only the unfinished
+// Advance trajectory disappears; every previously displayed saved run remains
+// exactly where the user had it.
+function captureDisplayRunSelections() {
+	if (typeof primitives !== "function") return [];
+	let snapshot = [];
+	for (let type of ["TimePlot"]) {
+		for (let primitive of (primitives(type) || [])) {
+			snapshot.push({ id: String(getID(primitive)), type, runName: getDisplayRunName(primitive) });
+		}
+	}
+	for (let type of ["ComparePlot", "Table", "XyPlot", "HistoPlot"]) {
+		for (let primitive of (primitives(type) || [])) {
+			snapshot.push({ id: String(getID(primitive)), type, runNames: getCompareRunNames(primitive).slice() });
+		}
+	}
+	return snapshot;
+}
+
+function restoreDisplayRunSelections(snapshot, transientRunName = "") {
+	if (!Array.isArray(snapshot) || typeof findID !== "function") return;
+	let restoredIds = new Set();
+	for (let entry of snapshot) {
+		let primitive = findID(entry.id);
+		if (!primitive) continue;
+		restoredIds.add(String(entry.id));
+		if (Array.isArray(entry.runNames)) setCompareRunNames(primitive, entry.runNames);
+		else primitive.setAttribute("RunName", String(entry.runName || ""));
+	}
+
+	// Displays created while Advance was running have no pre-Advance snapshot.
+	// Remove only the discarded transient run from those displays while leaving
+	// any saved runs the user selected during exploration untouched.
+	let doomed = String(transientRunName || "").trim();
+	if (doomed && typeof primitives === "function") {
+		for (let type of ["TimePlot"]) {
+			for (let primitive of (primitives(type) || [])) {
+				if (restoredIds.has(String(getID(primitive)))) continue;
+				if (getDisplayRunName(primitive) === doomed) primitive.setAttribute("RunName", "");
+			}
+		}
+		for (let type of ["ComparePlot", "Table", "XyPlot", "HistoPlot"]) {
+			for (let primitive of (primitives(type) || [])) {
+				if (restoredIds.has(String(getID(primitive)))) continue;
+				setCompareRunNames(primitive, getCompareRunNames(primitive).filter(name => name !== doomed));
+			}
+		}
+	}
+	notifySystemikaRunsChanged({ action: "restore-advance-selections" });
+}
+
+function selectNewRunForDisplays(runName) {
+	let name = String(runName || "").trim();
+	if (!name || typeof primitives !== "function") return;
+
+	for (let type of ["TimePlot"]) {
+		for (let primitive of (primitives(type) || [])) primitive.setAttribute("RunName", name);
+	}
+
+	for (let type of ["ComparePlot", "Table", "XyPlot", "HistoPlot"]) {
+		for (let primitive of (primitives(type) || [])) {
+			let selected = getCompareRunNames(primitive).filter(Boolean);
+			if (!selected.includes(name)) selected.push(name);
+			setCompareRunNames(primitive, selected);
+		}
+	}
+
+	if (typeof window !== "undefined") {
+		window.SystemikaDisplayRuns = window.SystemikaDisplayRuns || {};
+		window.SystemikaDisplayRuns.lastSelectedRun = name;
+		if (typeof window.dispatchEvent === "function" && typeof CustomEvent === "function") {
+			window.dispatchEvent(new CustomEvent("systemika:new-run-selected", { detail: { runName: name } }));
+		}
+	}
+}
+
+if (typeof window !== "undefined") {
+	window.SystemikaDisplayRuns = window.SystemikaDisplayRuns || {};
+	window.SystemikaDisplayRuns.selectNewRun = selectNewRunForDisplays;
+	window.SystemikaDisplayRuns.captureSelections = captureDisplayRunSelections;
+	window.SystemikaDisplayRuns.restoreSelections = restoreDisplayRunSelections;
+	window.SystemikaDisplayRuns.removeRun = removeRunFromDisplaySelections;
+	window.SystemikaDisplayRuns.renameRun = renameRunInDisplaySelections;
+	window.SystemikaDisplayRuns.notifyChanged = notifySystemikaRunsChanged;
+}
+
+function getCompareRunBounds(primitive) {
+	let min = Infinity;
+	let max = -Infinity;
+	for (let runName of getCompareRunNames(primitive)) {
+		let rows = null;
+		if (window.systemikaSimulationData) {
+			let run = systemikaSimulationData.getRun(runName);
+			if (run) rows = run.rows;
+		}
+		if (!rows && !runName && RunResults.results) rows = RunResults.results;
+		if (!rows || !rows.length) continue;
+		let first = Number(rows[0][0]);
+		let last = Number(rows[rows.length - 1][0]);
+		if (Number.isFinite(first)) min = Math.min(min, first);
+		if (Number.isFinite(last)) max = Math.max(max, last);
+	}
+	return Number.isFinite(min) && Number.isFinite(max) ? { min, max } : null;
+}
+
+function ensureDisplayRunAvailable(primitive, onLoaded) {
+	let runName = getDisplayRunName(primitive);
+	if (!runName) return true;
+	if (!window.systemikaSimulationData) return false;
+	if (systemikaSimulationData.hasRun(runName)) return true;
+	if (!systemikaSimulationData.persistenceAvailable()) return false;
+
+	systemikaSimulationData.ensureRunLoaded(runName).then(() => {
+		if (typeof onLoaded === "function") onLoaded();
+	}).catch((error) => {
+		console.error(error);
+		xAlert(`Unable to load saved run <b>${htmlEscape(runName)}</b>.<br/><br/>${htmlEscape(error.message || String(error))}`);
+	});
+	return false;
+}
+
+function ensureDisplayRunsAvailable(primitive, onLoaded) {
+	let runNames = getCompareRunNames(primitive);
+	let savedNames = runNames.filter(Boolean);
+	if (!savedNames.length) return true;
+	if (!window.systemikaSimulationData) return false;
+	let missing = savedNames.filter(name => !systemikaSimulationData.hasRun(name));
+	if (!missing.length) return true;
+	if (!systemikaSimulationData.persistenceAvailable()) return false;
+
+	Promise.all(missing.map(name => systemikaSimulationData.ensureRunLoaded(name))).then(() => {
+		if (typeof onLoaded === "function") onLoaded();
+	}).catch((error) => {
+		console.error(error);
+		xAlert(`Unable to load saved run data.<br/><br/>${htmlEscape(error.message || String(error))}`);
+	});
+	return false;
+}
+
+function systemikaFirefoxLimitedRunMode() {
+	return window.fileManager
+		&& typeof fileManager.shouldSuppressRunManagerUnavailableAlert === "function"
+		&& fileManager.shouldSuppressRunManagerUnavailableAlert();
+}
+
+class CompareRunsSelectorComponent extends HtmlComponent {
+	static get CURRENT_TOKEN() { return "__systemika_current__"; }
+
+	constructor(parent, heading = "Runs to compare") {
+		super(parent);
+		this.heading = heading;
+	}
+
+	render() {
+		return (`<table class="modern-table zebra systemika-compare-runs-table" style="width:100%;">
+			<tr><th>${htmlEscape(this.heading)}</th></tr>
+			<tr><td>
+				<div class="systemika-compare-run-options" style="max-height:180px; overflow-y:auto; border:1px solid #ccc; padding:4px;">
+					Loading runs…
+				</div>
+				<div style="display:flex; gap:4px; margin-top:4px; flex-wrap:wrap;">
+					<button type="button" class="systemika-compare-runs-toggle-all" style="min-width:132px;">Select / Deselect All</button>
+					<button type="button" class="systemika-compare-runs-refresh">Refresh</button>
+					<button type="button" class="systemika-compare-runs-folder">Manage Runs</button>
+				</div>
+				<div class="systemika-compare-runs-status" style="font-size:0.85em; margin-top:4px;"></div>
+			</td></tr>
+		</table>`);
+	}
+
+	optionHtml(value, label, checked, unavailable = false) {
+		return `<label style="display:block; padding:2px 0;${unavailable ? " opacity:0.65;" : ""}">
+			<input type="checkbox" class="systemika-compare-run-source" value="${htmlEscape(value)}" ${checked ? "checked" : ""} ${unavailable ? "disabled" : ""}/>
+			${htmlEscape(label)}${unavailable ? " (unavailable)" : ""}
+		</label>`;
+	}
+
+	updateToggleAllLabel() {
+		let boxes = this.find(".systemika-compare-run-source:not(:disabled)");
+		let checked = boxes.filter(":checked").length;
+		let button = this.find(".systemika-compare-runs-toggle-all");
+		button.prop("disabled", boxes.length === 0);
+		// Keep one stable label/width so the properties dialog does not resize
+		// when the toggle changes state. The tooltip still describes the next
+		// action for accessibility.
+		button.text("Select / Deselect All");
+		button.attr("title", boxes.length > 0 && checked === boxes.length ? "Deselect all runs" : "Select all runs");
+	}
+
+	async refreshOptions() {
+		let options = this.find(".systemika-compare-run-options");
+		let status = this.find(".systemika-compare-runs-status");
+		let selected = getCompareRunNames(this.primitive);
+		let currentName = hasCurrentRunSource() ? getCurrentRunSourceName() : "";
+		let currentChecked = Boolean(currentName) && (selected.includes("") || selected.includes(currentName));
+		let html = currentName
+			? this.optionHtml(currentName, currentName, currentChecked)
+			: "";
+
+		if (!window.systemikaSimulationData || !systemikaSimulationData.persistenceAvailable()) {
+			for (let name of selected.filter(Boolean)) {
+				if (name !== currentName) html += this.optionHtml(name, name, true, true);
+			}
+			options.html(html || `<div style="padding:2px 0;">No run data available.</div>`);
+			this.updateToggleAllLabel();
+			let supportedWebStore = window.systemikaBrowserRuns
+				&& (!window.systemikaBrowserRuns.isSupported || window.systemikaBrowserRuns.isSupported());
+			let fallbackStatus = "Only the current in-memory run is available in Browser Storage Mode. Full run comparison requires project-folder access.";
+			if (window.fileManager && typeof fileManager.getProjectStorageUnavailableShortMessage === "function") {
+				fallbackStatus = fileManager.getProjectStorageUnavailableShortMessage();
+			}
+			status.text(supportedWebStore
+				? "Persistent run storage is not connected yet. Use Run or Manage Runs to authorize the model's project folder."
+				: fallbackStatus);
+			return;
+		}
+
+		try {
+			let runs = await systemikaSimulationData.listRuns();
+			let names = runs.map(run => run.runName);
+			// A run that no longer exists must not remain checked. This covers both
+			// Manage Runs deletions and files removed externally between refreshes.
+			let available = new Set(names);
+			if (currentName) available.add(currentName);
+			let prunedSelected = selected.filter(name => !name || available.has(name));
+			if (prunedSelected.length !== selected.length) {
+				setCompareRunNames(this.primitive, prunedSelected);
+				selected = prunedSelected;
+			}
+			for (let name of names) {
+				// If the live run and saved package have the same label, expose one
+				// user-facing item. The live source wins until the run completes.
+				if (currentName && name === currentName) continue;
+				html += this.optionHtml(name, name, selected.includes(name));
+			}
+			// Missing saved runs were pruned from the selection above.
+			options.html(html || `<div style="padding:2px 0;">No saved runs yet.</div>`);
+			this.updateToggleAllLabel();
+			this.updateStatus();
+		} catch (error) {
+			console.error(error);
+			options.html(html || `<div style="padding:2px 0;">No run data available.</div>`);
+			this.updateToggleAllLabel();
+			status.text(`Unable to list saved runs: ${error.message || error}`);
+		}
+	}
+
+	selectedFromUi() {
+		let names = [];
+		this.find(".systemika-compare-run-source:checked").each((index, element) => {
+			let name = String($(element).val() || "");
+			if (name && !names.includes(name)) names.push(name);
+		});
+		return names;
+	}
+
+	updateStatus() {
+		let names = this.selectedFromUi();
+		let status = this.find(".systemika-compare-runs-status");
+		if (!names.length) status.text("No run selected. Select one or more runs to display.");
+		else if (names.length === 1) status.text("1 run selected.");
+		else status.text(`${names.length} runs selected for comparison.`);
+	}
+
+	async applySelection() {
+		let names = this.selectedFromUi();
+		let savedNames = names.filter(Boolean);
+		let status = this.find(".systemika-compare-runs-status");
+		try {
+			if (savedNames.length && window.systemikaSimulationData) {
+				status.text("Loading selected runs…");
+				await Promise.all(savedNames.map(name => systemikaSimulationData.ensureRunLoaded(name)));
+			}
+			setCompareRunNames(this.primitive, names);
+			this.updateStatus();
+			this.parent.subscribePool.publish("run sources changed");
+		} catch (error) {
+			console.error(error);
+			xAlert(`Unable to load selected run.<br/><br/>${htmlEscape(error.message || String(error))}`);
+			await this.refreshOptions();
+		}
+	}
+
+	bindEvents() {
+		this.refreshOptions();
+		let manageRunsButton = this.find(".systemika-compare-runs-folder");
+		if (systemikaFirefoxLimitedRunMode()) {
+			manageRunsButton.prop("disabled", true);
+			manageRunsButton.attr("title", "Manage Runs requires a Chromium-based browser");
+		}
+		if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+			window.addEventListener("systemika:new-run-selected", () => this.refreshOptions());
+			window.addEventListener("systemika:runs-changed", () => this.refreshOptions());
+		}
+		this.find(".systemika-compare-run-options").on("change", ".systemika-compare-run-source", () => {
+			this.updateToggleAllLabel();
+			this.applySelection();
+		});
+		this.find(".systemika-compare-runs-toggle-all").click((event) => {
+			event.preventDefault();
+			let boxes = this.find(".systemika-compare-run-source:not(:disabled)");
+			let shouldSelect = boxes.length > 0 && boxes.filter(":checked").length !== boxes.length;
+			boxes.prop("checked", shouldSelect);
+			this.updateToggleAllLabel();
+			this.applySelection();
+		});
+		this.find(".systemika-compare-runs-refresh").click((event) => {
+			event.preventDefault();
+			this.refreshOptions();
+		});
+		this.find(".systemika-compare-runs-folder").click(async (event) => {
+			event.preventDefault();
+			if (systemikaFirefoxLimitedRunMode()) return;
+			try {
+				if (window.SystemikaRunManager) await SystemikaRunManager.openRunsFolder();
+			} catch (error) {
+				console.error(error);
+				xAlert(`Unable to open the Runs manager.<br/><br/>${htmlEscape(error.message || String(error))}`);
+			}
+		});
+	}
+
+	applyChange() {
+		setCompareRunNames(this.primitive, this.selectedFromUi());
+	}
+}
+
+class RunSelectorComponent extends HtmlComponent {
+	render() {
+		return (`<table class="modern-table zebra systemika-run-source-table" style="width:100%;">
+			<tr><th>Run data</th></tr>
+			<tr><td>
+				<select class="systemika-run-source enter-apply" style="width:100%;">
+					<option value="">Loading runs…</option>
+				</select>
+				<div style="display:flex; gap:4px; margin-top:4px;">
+					<button type="button" class="systemika-run-source-refresh">Refresh</button>
+					<button type="button" class="systemika-run-source-folder">Manage Runs</button>
+				</div>
+				<div class="systemika-run-source-status" style="font-size:0.85em; margin-top:4px;">Loading saved runs…</div>
+			</td></tr>
+		</table>`);
+	}
+
+	async refreshOptions() {
+		let select = this.find(".systemika-run-source");
+		let status = this.find(".systemika-run-source-status");
+		let selected = getDisplayRunName(this.primitive);
+		let currentName = hasCurrentRunSource() ? getCurrentRunSourceName() : "";
+		let effectiveSelected = currentName && (selected === "" || selected === currentName) ? currentName : selected;
+
+		if (!window.systemikaSimulationData || !systemikaSimulationData.persistenceAvailable()) {
+			let html = currentName
+				? `<option value="${htmlEscape(currentName)}">${htmlEscape(currentName)}</option>`
+				: `<option value="">No run data available</option>`;
+			if (selected && selected !== currentName) html += `<option value="${htmlEscape(selected)}">${htmlEscape(selected)} (unavailable)</option>`;
+			select.html(html);
+			select.val(effectiveSelected);
+			let supportedWebStore = window.systemikaBrowserRuns
+				&& (!window.systemikaBrowserRuns.isSupported || window.systemikaBrowserRuns.isSupported());
+			status.text(supportedWebStore
+				? "Persistent run storage is not connected yet. Use Run or Manage Runs to authorize the model's project folder."
+				: "Persistent project-local run storage is unavailable in this browser.");
+			return;
+		}
+
+		try {
+			let runs = await systemikaSimulationData.listRuns();
+			let names = runs.map(run => run.runName);
+			let html = currentName ? `<option value="${htmlEscape(currentName)}">${htmlEscape(currentName)}</option>` : "";
+			for (let name of names) {
+				if (currentName && name === currentName) continue;
+				html += `<option value="${htmlEscape(name)}">${htmlEscape(name)}</option>`;
+			}
+			if (selected && selected !== currentName && !names.includes(selected)) {
+				html += `<option value="${htmlEscape(selected)}">${htmlEscape(selected)} (missing)</option>`;
+			}
+
+			// If there is no live run yet, make an existing saved run immediately
+			// useful instead of exposing a synthetic Current/latest option.
+			if (!currentName && !effectiveSelected && names.length) {
+				effectiveSelected = names.includes("Base") ? "Base" : names[0];
+				this.primitive.setAttribute("RunName", effectiveSelected);
+				await systemikaSimulationData.ensureRunLoaded(effectiveSelected);
+			}
+			if (!html) html = `<option value="">No saved runs yet</option>`;
+			select.html(html);
+			select.val(effectiveSelected);
+			let visibleCount = names.length + (currentName && !names.includes(currentName) ? 1 : 0);
+			status.text(visibleCount ? `${visibleCount} run${visibleCount === 1 ? "" : "s"} available.` : "No saved runs yet.");
+		} catch (error) {
+			console.error(error);
+			status.text(`Unable to list saved runs: ${error.message || error}`);
+		}
+	}
+
+	bindEvents() {
+		this.refreshOptions();
+		let manageRunsButton = this.find(".systemika-run-source-folder");
+		if (systemikaFirefoxLimitedRunMode()) {
+			manageRunsButton.prop("disabled", true);
+			manageRunsButton.attr("title", "Manage Runs requires a Chromium-based browser");
+		}
+		if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+			window.addEventListener("systemika:new-run-selected", () => this.refreshOptions());
+			window.addEventListener("systemika:runs-changed", () => this.refreshOptions());
+		}
+		this.find(".systemika-run-source-refresh").click((event) => {
+			event.preventDefault();
+			this.refreshOptions();
+		});
+		this.find(".systemika-run-source-folder").click(async (event) => {
+			event.preventDefault();
+			if (systemikaFirefoxLimitedRunMode()) return;
+			try {
+				if (window.SystemikaRunManager) await SystemikaRunManager.openRunsFolder();
+			} catch (error) {
+				console.error(error);
+				xAlert(`Unable to open the Runs manager.<br/><br/>${htmlEscape(error.message || String(error))}`);
+			}
+		});
+		this.find(".systemika-run-source").change(async (event) => {
+			let select = $(event.currentTarget);
+			let status = this.find(".systemika-run-source-status");
+			let runName = String(select.val() || "");
+			select.prop("disabled", true);
+			try {
+				if (runName) {
+					status.text(`Loading ${runName}…`);
+					await systemikaSimulationData.ensureRunLoaded(runName);
+				}
+				this.primitive.setAttribute("RunName", runName);
+				let displayName = runName || getCurrentRunSourceName();
+				status.text(displayName ? `Using run: ${displayName}` : "No run data selected.");
+				this.parent.subscribePool.publish("run source changed");
+			} catch (error) {
+				console.error(error);
+				xAlert(`Unable to load saved run.<br/><br/>${htmlEscape(error.message || String(error))}`);
+				select.val(getDisplayRunName(this.primitive));
+			} finally {
+				select.prop("disabled", false);
+			}
+		});
+	}
+
+	applyChange() {
+		let value = String(this.find(".systemika-run-source").val() || "");
+		this.primitive.setAttribute("RunName", value);
+	}
+}
+
 // This is the super class for ComparePlotDialog and TableDialog
 class DisplayDialog extends jqDialog {
 	constructor(id) {
@@ -8013,8 +9982,17 @@ class DisplayDialog extends jqDialog {
 		this.displayLimit = undefined;
 		this.components = [];
 	}
+	getSelectedRunName() {
+		return getDisplayRunName(this.primitive);
+	}
 	getDefaultPlotPeriod() {
-		return getTimeStep();
+		return RunResults.getTimeStep(this.getSelectedRunName());
+	}
+	getDataTimeStart() {
+		return RunResults.getDataTimeStart(this.getSelectedRunName());
+	}
+	getDataTimeLength() {
+		return RunResults.getDataTimeLength(this.getSelectedRunName());
 	}
 	clearRemovedIds() {
 		for (let id of this.displayIdList) {
@@ -8115,8 +10093,8 @@ class AxisLimitsComponent extends HtmlComponent {
 			</tr>
 			${this.axisOptions.map(axis => {
 			let limit = axisLimits[axis.key];
-			let min = axis.isTimeAxis && limit.auto ? getTimeStart() : limit.min;
-			let max = axis.isTimeAxis && limit.auto ? getTimeStart() + getTimeLength() : limit.max;
+			let min = axis.isTimeAxis && limit.auto ? this.parent.getDataTimeStart() : limit.min;
+			let max = axis.isTimeAxis && limit.auto ? this.parent.getDataTimeStart() + this.parent.getDataTimeLength() : limit.max;
 			return (`<tr>
 					<td style="text-align:center; padding:0px 6px">${axis.text}</td>
 					<td style="padding:1px;">
@@ -8143,8 +10121,8 @@ class AxisLimitsComponent extends HtmlComponent {
 				this.find(`.${axis.key}-min-field, .${axis.key}-max-field`).prop("disabled", checkboxAuto);
 
 				// Set input values
-				let min = axis.isTimeAxis && checkboxAuto ? getTimeStart() : limit.min;
-				let max = axis.isTimeAxis && checkboxAuto ? getTimeStart() + getTimeLength() : limit.max;
+				let min = axis.isTimeAxis && checkboxAuto ? this.parent.getDataTimeStart() : limit.min;
+				let max = axis.isTimeAxis && checkboxAuto ? this.parent.getDataTimeStart() + this.parent.getDataTimeLength() : limit.max;
 				this.find(`.${axis.key}-min-field`).val(min);
 				this.find(`.${axis.key}-max-field`).val(max);
 
@@ -8197,7 +10175,7 @@ class TimePlotSelectorComponent extends PrimitiveSelectorComponent {
 	renderIncludedList() {
 		return (`<table id="${this.componentId}" class="primitive-selector">
 			<tr>
-				${["", "Added Primitives", "Left", "Right"].map(title => `<th>${title}</th>`).join("")}
+				${["", "Added Model Entities", "Left", "Right"].map(title => `<th>${title}</th>`).join("")}
 			</tr>
 			${this.displayIds.map((id, index) => {
 			const selectedSide = this.sides[index];
@@ -8279,7 +10257,7 @@ class TimePlotDialog extends DisplayDialog {
 		super(id);
 		this.setTitle("Time Plot Properties");
 		this.components = [
-			[new TimePlotSelectorComponent(this)],
+			[new RunSelectorComponent(this), new TimePlotSelectorComponent(this)],
 			[
 				new PlotPeriodComponent(this),
 				new AxisLimitsComponent(this, [
@@ -8295,7 +10273,7 @@ class TimePlotDialog extends DisplayDialog {
 				new LineOptionsComponent(this),
 				new CheckboxTableComponent(this, [
 					{ text: "Numbered Lines", attribute: "HasNumberedLines" },
-					{ text: "Colour from Primitive", attribute: "ColorFromPrimitive" },
+					{ text: "Colour from Model Entity", attribute: "ColorFromPrimitive" },
 					{ text: "Show Data when hovering", attribute: "ShowHighlighter" },
 				])
 			]
@@ -8322,7 +10300,7 @@ class GenerationsComponent extends HtmlComponent {
 	renderTable() {
 		const generationsHtml = `<table class="modern-table" style="width: 100%;">
 			<tr>
-				<th>#</th><th>Primitive</th><th>Label</th><th></th>
+				<th>#</th><th>Model Entity</th><th>Label</th><th></th>
 			</tr>
 			${this.gens.map((value, index) => `
 			${value.index == 0 && value.genIndex != 0 ? `<tr style="background-color: #ccc;"><td colspan="4"></td></tr>` : ""}
@@ -8384,10 +10362,10 @@ class GenerationsComponent extends HtmlComponent {
 class ComparePlotDialog extends DisplayDialog {
 	constructor(id) {
 		super(id);
-		this.setTitle("Compare Simulations Plot Properties");
+		this.setTitle("Time Plot Properties");
 
 		this.components = [
-			[new PrimitiveSelectorComponent(this)],
+			[new CompareRunsSelectorComponent(this), new PrimitiveSelectorComponent(this)],
 			[
 				new PlotPeriodComponent(this),
 				new AxisLimitsComponent(this, [
@@ -8401,12 +10379,25 @@ class ComparePlotDialog extends DisplayDialog {
 				new LineOptionsComponent(this),
 				new CheckboxTableComponent(this, [
 					{ text: "Numbered Lines", attribute: "HasNumberedLines" },
-					{ text: "Colour from Primitive", attribute: "ColorFromPrimitive" },
+					{ text: "Colour from Model Entity", attribute: "ColorFromPrimitive" },
 					{ text: "Show Data when hovering", attribute: "ShowHighlighter" },
 				])
-			],
-			[new GenerationsComponent(this, connection_array[this.primitive.id].gens)]
+			]
 		];
+	}
+	getDefaultPlotPeriod() {
+		let steps = getCompareRunNames(this.primitive)
+			.map(name => Number(RunResults.getTimeStep(name)))
+			.filter(value => Number.isFinite(value) && value > 0);
+		return steps.length ? Math.min(...steps) : super.getDefaultPlotPeriod();
+	}
+	getDataTimeStart() {
+		let bounds = getCompareRunBounds(this.primitive);
+		return bounds ? bounds.min : super.getDataTimeStart();
+	}
+	getDataTimeLength() {
+		let bounds = getCompareRunBounds(this.primitive);
+		return bounds ? bounds.max - bounds.min : super.getDataTimeLength();
 	}
 }
 
@@ -8498,7 +10489,7 @@ class HistoPlotDialog extends DisplayDialog {
 		this.displayLimit = 1;
 
 		this.components = [
-			[new PrimitiveSelectorComponent(this, 1)],
+			[new CompareRunsSelectorComponent(this), new PrimitiveSelectorComponent(this, 1)],
 			[
 				new HistogramOptionsComponent(this),
 				new RadioCompontent(this, {
@@ -8521,7 +10512,7 @@ class XySelectorComponent extends PrimitiveSelectorComponent {
 		return (`<table id="${this.componentId}" class="primitive-selector">
 				<tr>
 					<th></th>
-					<th>Added Primitives</td>
+					<th>Added Model Entities</td>
 					<th>Axis</th>
 				</tr>
 				${this.displayIds.map((id, index) => {
@@ -8560,7 +10551,7 @@ class XyPlotDialog extends DisplayDialog {
 		this.setTitle("XY Plot Properties");
 
 		this.components = [
-			[new XySelectorComponent(this, 2)],
+			[new CompareRunsSelectorComponent(this), new XySelectorComponent(this, 2)],
 			[
 				new PlotPeriodComponent(this),
 				new AxisLimitsComponent(this, [
@@ -8587,12 +10578,19 @@ class XyPlotDialog extends DisplayDialog {
 			]
 		];
 	}
+	getDefaultPlotPeriod() {
+		let steps = getCompareRunNames(this.primitive)
+			.map(name => Number(RunResults.getTimeStep(name)))
+			.filter(value => Number.isFinite(value) && value > 0);
+		return steps.length ? Math.min(...steps) : super.getDefaultPlotPeriod();
+	}
 }
 
 class TableData {
 	constructor() {
 		this.namesToDisplay = [];
 		this.results = [];
+		this.runNames = [];
 	}
 	exportCSV() {
 		let string = this.getAsString(",");
@@ -8603,37 +10601,32 @@ class TableData {
 		fileManager.exportFile(string, ".tsv");
 	}
 	getAsString(seperator) {
-		let str = "Time" + seperator;
-		for (let i = 0; i < this.namesToDisplay.length; i++) {
-			let name = this.namesToDisplay[i];
-			str += `${name}`;
-			if (i != this.namesToDisplay.length - 1) {
-				str += seperator;
+		let headers = ["Time"];
+		if (this.runNames.length > 1) {
+			for (let name of this.namesToDisplay) {
+				for (let runName of this.runNames) headers.push(`${name} [${runName}]`);
 			}
+		} else {
+			headers = headers.concat(this.namesToDisplay);
 		}
-		str += "\n";
+		let str = headers.join(seperator) + "\n";
 		for (let row of this.results) {
 			for (let i = 0; i < row.length; i++) {
 				let value = row[i];
-				if (value !== null) {
-					str += value.toString();
-				}
-				if (i != row.length - 1) {
-					str += seperator;
-				}
+				if (value !== null && value !== undefined) str += value.toString();
+				if (i !== row.length - 1) str += seperator;
 			}
 			str += "\n";
 		}
 		return str;
-
 	}
 }
 
 class TableLimitsComponent extends HtmlComponent {
 	render() {
 		let limits = JSON.parse(this.primitive.getAttribute("TableLimits"));
-		let startValue = limits.start.auto ? getTimeStart() : limits.start.value;
-		let endValue = limits.end.auto ? getTimeStart() + getTimeLength() : limits.end.value;
+		let startValue = limits.start.auto ? this.parent.getDataTimeStart() : limits.start.value;
+		let endValue = limits.end.auto ? this.parent.getDataTimeStart() + this.parent.getDataTimeLength() : limits.end.value;
 		let stepValue = limits.step.auto ? this.parent.getDefaultPlotPeriod() : limits.step.value;
 		return (`
 		<table class="modern-table zebra">
@@ -8666,17 +10659,17 @@ class TableLimitsComponent extends HtmlComponent {
 		this.find(".start-auto-checkbox").change(event => {
 			let startAuto = $(event.target).prop("checked");
 			this.find(".start-field").prop("disabled", startAuto);
-			this.find(".start-field").val(startAuto ? getTimeStart() : limits.start.value);
+			this.find(".start-field").val(startAuto ? this.parent.getDataTimeStart() : limits.start.value);
 		});
 		this.find(".end-auto-checkbox").change(event => {
 			let endAuto = $(event.target).prop("checked");
 			this.find(".end-field").prop("disabled", endAuto);
-			this.find(".end-field").val(endAuto ? getTimeStart() + getTimeLength() : limits.end.value);
+			this.find(".end-field").val(endAuto ? this.parent.getDataTimeStart() + this.parent.getDataTimeLength() : limits.end.value);
 		});
 		this.find(".step-auto-checkbox").change(event => {
 			let stepAuto = $(event.target).prop("checked");
 			this.find(".step-field").prop("disabled", stepAuto);
-			this.find(".step-field").val(stepAuto ? getTimeStep() : limits.step.value);
+			this.find(".step-field").val(stepAuto ? this.parent.getDefaultPlotPeriod() : limits.step.value);
 		});
 		this.find("input[type='text'].limit-input").keyup(event => {
 			this.checkValidTableLimits();
@@ -8930,7 +10923,7 @@ class TableDialog extends DisplayDialog {
 		this.setTitle("Table Properties");
 
 		this.components = [
-			[new PrimitiveSelectorComponent(this)],
+			[new CompareRunsSelectorComponent(this, "Runs to include"), new PrimitiveSelectorComponent(this)],
 			[
 				new TableLimitsComponent(this),
 				new ArithmeticPrecisionComponent(this),
@@ -8938,6 +10931,20 @@ class TableDialog extends DisplayDialog {
 				new ExportDataComponent(this)
 			]
 		];
+	}
+	getDefaultPlotPeriod() {
+		let steps = getCompareRunNames(this.primitive)
+			.map(name => Number(RunResults.getTimeStep(name)))
+			.filter(value => Number.isFinite(value) && value > 0);
+		return steps.length ? Math.min(...steps) : super.getDefaultPlotPeriod();
+	}
+	getDataTimeStart() {
+		let bounds = getCompareRunBounds(this.primitive);
+		return bounds ? bounds.min : super.getDataTimeStart();
+	}
+	getDataTimeLength() {
+		let bounds = getCompareRunBounds(this.primitive);
+		return bounds ? bounds.max - bounds.min : super.getDataTimeLength();
 	}
 }
 
@@ -9051,6 +11058,7 @@ class SimulationSettings extends jqDialog {
 		let start = getTimeStart();
 		let length = getTimeLength();
 		let step = getTimeStep();
+		let advanceBy = (typeof getAdvanceBy === "function") ? getAdvanceBy() : 1;
 		let timeUnit = getTimeUnits();
 		this.setHtml(`
 		<table class="modern-table zebra">
@@ -9067,9 +11075,15 @@ class SimulationSettings extends jqDialog {
 				&nbsp ${timeUnit} &nbsp
 			</td>
 		</tr><tr>
-			<td>Time Step</td>
+			<td>Time Step (DT)</td>
 			<td style="padding:1px;">
 				<input class="input-step enter-apply" name="step" style="width:100px;" value="${step}" type="number">
+				&nbsp ${timeUnit} &nbsp
+			</td>
+		</tr><tr>
+			<td>Advance By</td>
+			<td style="padding:1px;">
+				<input class="input-advance-by enter-apply" name="advanceBy" style="width:100px;" value="${advanceBy}" type="number" min="1" step="1">
 				&nbsp ${timeUnit} &nbsp
 			</td>
 		</tr><tr>
@@ -9088,18 +11102,40 @@ class SimulationSettings extends jqDialog {
 		this.start_field = $(this.dialogContent).find(".input-start");
 		this.length_field = $(this.dialogContent).find(".input-length");
 		this.step_field = $(this.dialogContent).find(".input-step");
+		this.advance_by_field = $(this.dialogContent).find(".input-advance-by");
 		this.warning_div = $(this.dialogContent).find(".simulation-settings-warning");
 		this.method_select = $(this.dialogContent).find(".input-method");
+		this.advanceMode = Boolean(typeof RunResults !== "undefined" && RunResults.isAdvanceActive());
+		if (this.advanceMode) {
+			// Start/Length/DT/solver are compiled into the active simulation. Changing
+			// them mid-run would invalidate its solver/task state. Advance By, on the
+			// other hand, is a UI stepping preference and is safe to change live.
+			this.start_field.prop("disabled", true);
+			this.length_field.prop("disabled", true);
+			this.step_field.prop("disabled", true);
+			this.method_select.prop("disabled", true);
+		}
 
 		this.start_field.keyup(() => this.checkValidTimeSettings());
 		this.length_field.keyup(() => this.checkValidTimeSettings());
 		this.step_field.keyup(() => this.checkValidTimeSettings());
+		this.advance_by_field.keyup(() => this.checkValidTimeSettings());
+		this.advance_by_field.change(() => this.checkValidTimeSettings());
 		this.method_select.change(() => this.checkValidTimeSettings());
 
 		this.checkValidTimeSettings();
 	}
 
 	checkValidTimeSettings() {
+		if (this.advanceMode) {
+			let value = Number(this.advance_by_field.val());
+			if (this.advance_by_field.val().trim() === "" || !Number.isInteger(value) || value < 1) {
+				this.warning_div.html(warningHtml("Advance By must be a whole number greater than or equal to 1.", true));
+				return false;
+			}
+			this.warning_div.html("");
+			return true;
+		}
 		if (isNaN(this.start_field.val()) || this.start_field.val().trim() === "") {
 			this.warning_div.html(warningHtml(`Start <b>${this.start_field.val()}</b> is not a decimal number.`, true));
 			return false;
@@ -9108,6 +11144,9 @@ class SimulationSettings extends jqDialog {
 			return false;
 		} else if (isNaN(this.step_field.val()) || this.step_field.val().trim() === "") {
 			this.warning_div.html(warningHtml(`Step <b>${this.step_field.val()}</b> is not a decimal number.`, true));
+			return false;
+		} else if (this.advance_by_field.val().trim() === "" || !Number.isInteger(Number(this.advance_by_field.val())) || Number(this.advance_by_field.val()) < 1) {
+			this.warning_div.html(warningHtml(`Advance By must be a whole number greater than or equal to 1.`, true));
 			return false;
 		} else if (Number(this.length_field.val()) <= 0) {
 			this.warning_div.html(warningHtml(`Length must be &gt;0`, true));
@@ -9136,8 +11175,8 @@ class SimulationSettings extends jqDialog {
 		} else if ($(this.method_select).find(":selected").val() === "RK4") {
 			this.warning_div.html(noteHtml(`
 				Do not use RK4 without a good reason, <br/>
-				and NEVER if the model contains discontinuities <br/>
-				(e.g. <b>Pulse</b>, <b>Step</b> or <b>Random numbers</b>)!
+				and avoid it when the model contains abrupt discontinuities <br/>
+				(e.g. a sudden switch created with <b>IfThenElse</b>).
 			`));
 			return true;
 		}
@@ -9147,11 +11186,22 @@ class SimulationSettings extends jqDialog {
 	}
 
 	makeApply() {
+		if (this.advanceMode) {
+			let value = Number(this.advance_by_field.val());
+			if (!Number.isInteger(value) || value < 1) {
+				this.warning_div.html(warningHtml("Advance By must be a whole number greater than or equal to 1.", true));
+				return false;
+			}
+			if (typeof setAdvanceBy === "function") setAdvanceBy(value);
+			return true;
+		}
+
 		let validSettings = this.checkValidTimeSettings();
 		if (validSettings) {
 			setTimeStart(this.start_field.val());
 			setTimeLength(this.length_field.val());
 			setTimeStep(this.step_field.val());
+			if (typeof setAdvanceBy === "function") setAdvanceBy(Number(this.advance_by_field.val()));
 			let method = $(".input-method :selected").val();
 			setAlgorithm(method);
 		}
@@ -9352,6 +11402,49 @@ class NumberboxDialog extends DisplayDialog {
 	}
 }
 
+class LinkPropertiesDialog extends jqDialog {
+	constructor() {
+		super();
+		this.primitive = null;
+		this.setTitle("Link Properties");
+		this.setHtml(`
+			<div style="min-width: 280px; padding: 0.5rem;">
+				<label for="link-polarity-field"><b>Polarity:</b></label><br/>
+				<select id="link-polarity-field" class="polarity-field enter-apply" style="width: 100%; margin-top: 0.5rem;">
+					<option value="">Unspecified</option>
+					<option value="+">Positive (+)</option>
+					<option value="-">Negative (−)</option>
+				</select>
+				<p style="margin: 0.9rem 0 0; max-width: 320px;">Polarity is a causal annotation. It does not change the simulation equations.</p>
+			</div>
+		`);
+		this.polarityField = $(this.dialogContent).find(".polarity-field").get(0);
+		this.bindEnterApplyEvents();
+	}
+	open(id) {
+		if (jqDialog.blockingDialogOpen) return;
+		this.primitive = findID(id);
+		if (!this.primitive || this.primitive.value.nodeName !== "Link") return;
+		this.show();
+	}
+	beforeShow() {
+		if (!this.primitive) return;
+		let polarity = this.primitive.getAttribute("Polarity") || "";
+		this.polarityField.value = polarity === "+" || polarity === "-" ? polarity : "";
+	}
+	afterShow() {
+		this.polarityField.focus();
+	}
+	makeApply() {
+		if (!this.primitive) return false;
+		let polarity = this.polarityField.value;
+		if (!["", "+", "-"].includes(polarity)) return false;
+		this.primitive.setAttribute("Polarity", polarity);
+		let visual = get_object(getID(this.primitive));
+		if (visual && typeof visual.update === "function") visual.update();
+	}
+}
+
 class ConverterDialog extends jqDialog {
 	constructor() {
 		super();
@@ -9375,8 +11468,8 @@ class ConverterDialog extends jqDialog {
 			</div>
 		`);
 
-		this.setHelpButtonInfo("converter-help", "Converter Help", `<div style="max-width: 400px;">
-			<p>The converter is a table look-up function that converts the values X<sub>i</sub> from the input (the linked-in primitive) to the output values Y<sub>i</sub> from the converter.</p>
+		this.setHelpButtonInfo("converter-help", "Lookup Help", `<div style="max-width: 400px;">
+			<p>The lookup maps input values X<sub>i</sub> from the linked-in model entity to output values Y<sub>i</sub> using a lookup table.</p>
 			<p>
 				<b>Definition:</b></br>
 				&nbsp &nbsp <span style="font-family: monospace;" >
@@ -9397,7 +11490,7 @@ class ConverterDialog extends jqDialog {
 				<li>${keyHtml(["Shift", "Enter"])} &rarr; Adds new line</li>
 				<li>${keyHtml([modifierKey, "v"])} &rarr; Paste (you can paste two columns from spreadsheet program)</li>
 			</ul>
-			${noteHtml("Comments are not allowed in the converter.")}
+			${noteHtml("Comments are not allowed in the lookup.")}
 		</div>
 		`)
 
@@ -9467,7 +11560,7 @@ class ConverterDialog extends jqDialog {
 		}
 		this.primitive = findID(id);
 		if (this.primitive == null) {
-			alert("Primitive with id " + id + " does not exist");
+			alert("Model entity with id " + id + " does not exist");
 			return;
 		}
 		this.show();
@@ -9631,7 +11724,7 @@ class DebugDialog extends jqDialog {
 		this.setTitle("Debug");
 		this.setHtml(`
 			<div id="log_panel" style="z-index: 10; position: absolute; left: 0px; top: 0px; height: 90%; overflow-x: visible">
-				This windows is only for developers of StochSD. If you are not developing StochSD you probably dont need this.<br/>
+				This window is intended for Systemika development and troubleshooting.<br/>
 				<button class="btn_clear_log">clear</button>
 				<div class="log" style="width: 100%; height: 90%; overflow-y: scroll;">
 				</div>
@@ -9660,71 +11753,129 @@ class CloseDialog extends jqDialog {
 	}
 }
 
-class AboutDialog extends CloseDialog {
+class GettingStartedDialog extends CloseDialog {
 	constructor() {
 		super();
-		this.setTitle("About StochSD");
+		this.setTitle("Getting Started");
 		this.setHtml(`
-			<div style="min-width:300px; max-width: 800px;">
-			<img src="graphics/stochsd_high.png" style="width: 128px; height: 128px"/><br/>
-			<b>StochSD version ${stochsd.version} (YYYY.MM.DD)</b><br/>
-			<br/>
-			<b>StochSD</b> (<u>Stoch</u>astic <u>S</u>ystem <u>D</u>ynamics) is an extension of System Dynamics into the field of 	<b>stochastic modelling</b>. In particular, you can make statistical analyses from multiple simulation runs.<br/>
-			<br/>
-			StochSD is an open source program based on the <a target="_blank" href="http://insightmaker.com">Insight Maker engine</a> (insightmaker.com) developed by Scott Fortmann-Roe. However, the graphic package of Insight Maker is replaced to make StochSD open for use as well as modifications and extensions. The file handling system is also rewritten. Finally, tools for optimisation, sensitivity analysis and statistical analysis are supplemented.<br/>
-			<br/>
-			StochSD was developed by Leif Gustafsson, Erik Gustafsson and Magnus Gustafsson, Uppsala University, Uppsala, Sweden.<br/>
-			Mail: leif.gunnar.gustafsson@gmail.com
-			</div>
-		`);
+		<div style="min-width: 420px; max-width: 760px; line-height: 1.45;">
+			<p><b>Systemika</b> is designed for building and teaching stock-and-flow models. A typical workflow is:</p>
+			<ol>
+				<li><b>Set simulation time.</b> Use the <b>Time Unit</b> control to set the model time unit, start time, length, DT, solver, and Advance increment.</li>
+				<li><b>Build the structure.</b> Add Stocks, Flows, Links, Auxiliaries, Constants, Lookups, and Ghosts from the vertical toolbar.</li>
+				<li><b>Enter definitions and units.</b> Double-click a model entity to edit its equation/value and declared unit. Links may also carry +/− polarity annotations.</li>
+				<li><b>Check units.</b> Use <b>Check Units → Report</b>. Systemika reports inconsistencies but never changes, converts, or suggests units.</li>
+				<li><b>Add outputs.</b> Use Number Box, Table, Time Plot, XY Plot, or Histogram from the top toolbar.</li>
+				<li><b>Run or explore.</b> <b>Run/Pause</b> performs a normal simulation. <b>Advance</b> steps through the model and allows permitted parameter changes between advances.</li>
+				<li><b>Save the model.</b> Use Save or Save As. The red <b>Unsaved Changes</b> indicator is also clickable.</li>
+			</ol>
+			<p>Equations can span multiple lines. Press <b>${modifierKey}+Enter</b> in the equation editor to apply a multiline definition.</p>
+		</div>`);
 	}
 }
 
-class FullPotentialCSSDialog extends CloseDialog {
+class KeyboardShortcutsDialog extends CloseDialog {
 	constructor() {
 		super();
-		this.setTitle("What is Full Potential CSS?");
+		this.setTitle("Keyboard Shortcuts");
 		this.setHtml(`
-		<div style="min-width: 300px; max-width: 1300px; overflow-y: auto;">
-		<p>A real SYSTEM can be <i>described</i> as a well-defined CONCEPTUAL MODEL in text, figure and values. This conceptual model can then be <i>realised</i> as an executable <b>Micro Model</b> where each object is represented as an entity, or as an executable <b>Macro Model</b> where a 'Population' of entities are aggregated into a few stages. For example:</p>
-		<table class="modern-table zebra center-horizontally">
-			<tr><th></th><th>Micro approach</th><th>Macro approach</th></tr>
-			<tr><td>Flowing water</td><td>H<sub>2</sub>O molecules</td><td>A river</td></tr>
-			<tr><td>A disease process</td><td>Individual level (Medicine)</td><td>Population level (Epidemiology)</td></tr>
-			<tr><td>Biology</td><td>Individual of a species</td><td>Ecological system</td></tr>
-			<tr><td>Traffic</td><td>Individual vehicles</td><td>Traffic flows</td></tr>
+		<div style="min-width: 520px; max-width: 820px; max-height: 70vh; overflow-y: auto;">
+		<table class="modern-table zebra" style="width:100%">
+		<tr><th>Action</th><th>Shortcut</th></tr>
+		<tr><td>Open model</td><td>${modifierKey}+O</td></tr>
+		<tr><td>Save</td><td>${modifierKey}+S</td></tr>
+		<tr><td>Save As</td><td>${modifierKey}+Shift+S</td></tr>
+		<tr><td>Undo / Redo</td><td>${modifierKey}+Z / ${modifierKey}+Y</td></tr>
+		<tr><td>Cut / Copy / Paste</td><td>${modifierKey}+X / ${modifierKey}+C / ${modifierKey}+V</td></tr>
+		<tr><td>Select all</td><td>${modifierKey}+A</td></tr>
+		<tr><td>Delete selection</td><td>Delete</td></tr>
+		<tr><td>Zoom in / out</td><td>${modifierKey}++ / ${modifierKey}+-</td></tr>
+		<tr><td>Clear outputs</td><td>${modifierKey}+0</td></tr>
+		<tr><td>Run / Pause</td><td>${modifierKey}+1</td></tr>
+		<tr><td>Advance</td><td>${modifierKey}+2</td></tr>
+		<tr><td>Advance to End</td><td>${modifierKey}+3</td></tr>
+		<tr><td>Stock / Flow / Auxiliary / Constant</td><td>S / F / A / C</td></tr>
+		<tr><td>Link</td><td>L</td></tr>
+		<tr><td>Link Properties (one Link selected)</td><td>L</td></tr>
+		<tr><td>Lookup / Ghost</td><td>K / G</td></tr>
+		<tr><td>Hide / unhide definition question marks</td><td>Q</td></tr>
+		<tr><td>Number Box / Table</td><td>N / T</td></tr>
+		<tr><td>Time Plot / XY Plot / Histogram</td><td>P / X / H</td></tr>
+		<tr><td>Rotate entity name</td><td>R</td></tr>
+		<tr><td>Apply multiline equation</td><td>${modifierKey}+Enter</td></tr>
 		</table>
-		<p>Regardless of whether you choose a micro approach using <b>Discrete Event Simulation</b> (DES) or a macro approch using <b>Continuous System Simulation</b> (CSS), the results should be <b>consistent</b> (contradiction free), i.e. averages, variations, correlation, etc. should be the same. See the Figure.</p>
-		<img src="graphics/what_is_fp_css.png" style="display: block; max-width: 700px; margin: 0 auto;"/>
-		<p>Consistency is usually not obtained for <b>Classical CSS</b>. However, if the <b>Full Potential CSS</b> approach is followed, you can obtain results consistent with those from a micro model.</p>
-		<h3>Full Potential CSS requirements</h3>
-		<p>To correctly <i>realise</i> a <b>Conceptual model</b> into an <b>CSS model</b> the following rules must be applied:</p>
-		<ol>
-			<li>Discrete objects must be modelled as discrete (unless they can be regarded as continuous according to the Law of Large Numbers). Continuous matter should be modelled as continuous.</li>
-			<li>Attribute values are realised by multiple parallel sub-structures (Attribute expansion). </li>
-			<li>Distribution of the sojourn (stay) times in a stage are obtained by modelling the stage by a structure of compartments in series and/or parallel. (Stage-to-compartment expansion).</li>
-			<li>
-				Uncertainties of different types must realise the description in the well-defined conceptual model. This applies to:<br/>
-				&bull; Model structure &bull; Initial values &bull; Transitions &bull; Environmental influences &bull; Signals
-			</li>
-		</ol>
-		<p>Classical CSS cannot fulfil these conditions – but Full Potential CSS can! If one of several of these issues is part of the conceptul model, Full Potential CSS provides the way to correctly implement them in a CSS model.</p>
-		<p>To do so Full Potential CSS requires devices to model discrete/continuous/combined processes and to handle the different types of uncertainties as well as multiple simulations followed by a statistical analysis and presentation of the results in statistical terms.</p>
-		<p style="display: flex; flex-direction: row;">
-			<img src="graphics/stochsd_high.png" style="width: 32px; height: 32px; position: inline; margin-right: 8px;">
-			<span><i style="display: flex; flex-direction: column; justify-content: center; height: 100%;">StochSD is a package that can accomplish this.</i></span>
-		</p>
-		<p>
-			At <a target="_blank" href="https://stochsd.sourceforge.io/homepage/" >StochSD’s homepage</a> you find the theoretical papers describing this in detail. You also find Example Models that demonstrates the necessity of following the Full Potential rules. Further there are five Laboratory Exercises that teaches model building and simulation in CSS. &#x25A0;
-		</p>
-		</div>
+		<p style="color:#555">Single-letter shortcuts apply when focus is on the model canvas, not while typing in a field or dialog.</p>
+		</div>`);
+	}
+}
+
+function helpTemplateText(item) {
+	let text = item.syntax || item.replacement || item.name;
+	return String(text).replace(/##/g, "").replace(/\$\$/g, "");
+}
+
+class FunctionsAndEquationsDialog extends CloseDialog {
+	constructor() {
+		super();
+		this.setTitle("Functions & Equations");
+		let categoryHtml = functionCategories.map(category => `
+			<h3>${htmlEscape(category.name)}</h3>
+			<table class="modern-table zebra" style="width:100%">
+			<tr><th style="text-align:left">Function / syntax</th><th style="text-align:left">Purpose</th></tr>
+			${category.functions.map(item => `
+			<tr>
+				<td><code>${htmlEscape(helpTemplateText(item))}</code></td>
+				<td>${htmlEscape(item.description || "")}</td>
+			</tr>`).join("")}
+			</table>`).join("");
+		this.setHtml(`
+		<div style="min-width: 620px; max-width: 980px; max-height: 72vh; overflow-y: auto; line-height:1.4">
+			<p>Model entity references use square brackets, for example <code>[Population]</code>. Standard arithmetic operators, comparisons, parentheses, and the functions below are supported.</p>
+			<p>Equations may span multiple lines. Press <b>${modifierKey}+Enter</b> to apply a multiline equation. In random-function syntax, <code>[Seed]</code> means the seed argument is optional.</p>
+			${categoryHtml}
+		</div>`);
+	}
+}
+
+class UnitsHelpDialog extends CloseDialog {
+	constructor() {
+		super();
+		this.setTitle("Unit Checking");
+		this.setHtml(`
+		<div style="min-width: 440px; max-width: 780px; line-height:1.45">
+			<p>Systemika uses a <b>strict reporting-only unit checker</b>. It identifies unit inconsistencies; it does not choose units, convert them, infer synonyms, or repair the model.</p>
+			<ul>
+				<li>Unit symbols are literal and case-sensitive: <code>USD</code> is different from <code>$</code>, and <code>Person</code> is different from <code>People</code>.</li>
+				<li>Algebraically equivalent expressions are recognized: <code>Person/Year</code> is equivalent to <code>Person*Year^-1</code>.</li>
+				<li>A Flow connected to a Stock must be consistent with the Stock unit divided by the model time unit.</li>
+				<li>Missing information is reported as <b>Could not verify</b>, not treated as correct.</li>
+				<li><code>Unitless</code> means explicitly dimensionless.</li>
+			</ul>
+			<p>Use <b>Check Units → Report</b> in the main toolbar to review the model. The report never changes the model and never prevents a simulation from running.</p>
+		</div>`);
+	}
+}
+
+class AboutDialog extends CloseDialog {
+	constructor() {
+		super();
+		const productName = (typeof environment !== "undefined" && environment.getName && environment.getName() === "web")
+			? "Systemika Studio"
+			: "Systemika";
+		this.setTitle(`About ${productName}`);
+		this.setHtml(`
+			<div style="min-width:340px; max-width: 760px; line-height:1.45">
+			<img src="graphics/systemika_high.png" style="width: 96px; height: 96px" alt="Systemika"/><br/>
+			<b>${productName} ${systemika.version}</b><br/><br/>
+			<b>Systemika</b> is educational System Dynamics software focused on learning and teaching stock-and-flow modelling. It provides a native simulation engine with Euler and fourth-order Runge-Kutta integration, strict unit-consistency reporting, interactive Advance runs, and classroom-oriented model/output tools.<br/><br/>
+			Systemika was developed from the open-source StochSD codebase, which has historical lineage to Insight Maker. The current Systemika simulation engine and the model infrastructure replaced during the independence work are independently written for Systemika; remaining StochSD-derived application code and attribution are covered by the project license. Historical <code>.ssd</code> storage identifiers are retained for file compatibility.<br/><br/>
+			StochSD was developed by Leif Gustafsson, Erik Gustafsson and Magnus Gustafsson at Uppsala University, Sweden. Insight Maker was developed by Scott Fortmann-Roe.<br/><br/>
+			<a target="_blank" href="https://systemika.org">systemika.org</a>
+			</div>
 		`);
-		$(this.dialogContent).find("a").css("color", "blue");
 		$(this.dialogContent).find("a").click((event) => {
 			let url = event.currentTarget.href;
-			if (environment.openLink(url)) {
-				event.preventDefault();
-			}
+			if (environment.openLink(url)) event.preventDefault();
 		});
 	}
 }
@@ -9917,8 +12068,9 @@ class BrowserModelsDialog extends jqDialog {
 		this.storeModel(name);
 	}
 	storeModel(name) {
+		let modelData = createModelFileData();
 		try {
-			ModelStorage.save(name, createModelFileData());
+			ModelStorage.save(name, modelData);
 		} catch (error) {
 			xAlert(error.message);
 			return;
@@ -9927,7 +12079,7 @@ class BrowserModelsDialog extends jqDialog {
 		// instead of asking again.
 		fileManager.storedModelName = name;
 		fileManager.fileName = name;
-		markModelSaved();
+		markModelSaved(modelData);
 		fileManager.updateSaveTime();
 		fileManager.updateTitle();
 		if (this.visible) {
@@ -9979,18 +12131,12 @@ class BrowserModelsDialog extends jqDialog {
 class LicenseDialog extends CloseDialog {
 	constructor() {
 		super();
-		this.setTitle("StochSD License");
-
-		let currentYear = new Date().getFullYear();
+		this.setTitle("Systemika License");
 		this.setHtml(`
-		<p style="display: inline-block">
-		Copyright 2010-${currentYear} StochSD-Team and Scott Fortmann-Roe. All rights reserved.<br/>
-
-		The Insight Maker Engine was contributed to StochSD project from
-		Insight Maker project by Scott Fortmann-Roe, <a target="_blank" href="https://insightmaker.com">https://Insightmaker.com<a><br/>
-		</p><br/>
-		<iframe style="width: 700px; height: 500px;" src="license.html"/>
-		</div>
+		<p style="max-width:700px; line-height:1.4">
+		Systemika contains original Systemika code and code derived from StochSD. The application is distributed under the <b>GNU Affero General Public License, version 3 (AGPLv3)</b>. Copyright in individual contributions remains with the respective authors and contributors. See <b>Third-party Notices</b> for bundled libraries and attribution.
+		</p>
+		<iframe title="GNU Affero General Public License v3" style="width: 700px; height: 500px;" src="license.html"></iframe>
 		`);
 	}
 }
@@ -9998,66 +12144,47 @@ class LicenseDialog extends CloseDialog {
 class ThirdPartyLicensesDialog extends CloseDialog {
 	constructor() {
 		super();
-		this.setTitle("Third-party Licenses");
+		this.setTitle("Third-party Notices");
 
 		this.setHtml(`
-		<iframe style="width: 700px; height: 500px;" src="third-party-licenses.html"/>
-		</div>
+		<iframe title="Third-party notices" style="width: 700px; height: 500px;" src="third-party-licenses.html"></iframe>
 		`);
 	}
 }
 
 const functions = [
-	{ name: "PoFlow", arguments: [{ name: "Lambda" }], desc: "PoFlow(Lambda) is short for RandPoisson(DT()*Lambda)/DT(). <br/><span class='note'>This should only be used in flows.</span><br/><br/>PoFlow(Lambda) generates a Poisson distributed random number of transfered entities with the expected rate of Lambda entities per time unit." },
-	{ name: "Rand", arguments: [{ name: "Minimum", default: "0" }, { name: "Maximum", default: "1" }] },
-	{ name: "RandBernoulli", arguments: [{ name: "Probability", note: "min: 0, max: 1" }] },
-	{ name: "RandBinomial", arguments: [{ name: "Count" }, { name: "Probability" }] },
-	{ name: "RandNormal", arguments: [{ name: "Mean" }, { name: "Standard Deviation" }], desc: "Generates a normally distributed random number with a mean and a standard deviation. The mean and standard deviation are optional and default to 0 and 1 respectively." },
-	{ name: "RandLognormal", arguments: [{ name: "Mean" }, { name: "Standard Deviation" }] },
-	{ name: "RandNegativeBinomial", arguments: [{ name: "Successes" }, { name: "probability" }] },
-	{ name: "RandTriangular", arguments: [{ name: "minimum" }, { name: "maximum" }, { name: "peak" }] },
-	{ name: "RandGamma", arguments: [{ name: "Alpha" }, { name: "Beta" }] },
-	{ name: "RandBeta", arguments: [{ name: "Alpha" }, { name: "Beta" }] },
-	{ name: "RandExp", arguments: [{ name: "Beta" }] },
-	{ name: "RandPoisson", arguments: [{ name: "Lambda" }] },
-	{ name: "Pulse", arguments: [{ name: "Time" }, { name: "Volume", default: "0" }, { name: "Repeat", default: "1" }] },
-	{ name: "Step", arguments: [{ name: "Start" }, { name: "Height", default: "1" }] },
-	{ name: "Ramp", arguments: [{ name: "Start" }, { name: "Finish" }, { name: "Height", default: "1" }] },
-	{ name: "Delay", arguments: [{ name: "primitive" }, { name: "delay" }, { name: "initial value" }] },
-	{ name: "Delay1", arguments: [{ name: "Primitive" }, { name: "Delay" }, { name: "Initial Value" }] },
-	{ name: "Delay3", arguments: [{ name: "Primitive" }, { name: "Delay" }, { name: "Initial Value" }] },
-	{ name: "Smooth", synonyms: "delay", arguments: [{ name: "Primitive" }, { name: "Length" }, { name: "Initial Value" }] },
-	{ name: "Round", arguments: [{ name: "Value" }] },
-	{ name: "Ceiling", synonyms: "round", arguments: [{ name: "Value" }] },
-	{ name: "Floor", synonyms: "round", arguments: [{ name: "Value" }] },
+	{ name: "IfThenElse", arguments: [{ name: "Condition" }, { name: "Then Value", note: "value if true" }, { name: "Else Value", note: "value if false" }] },
+	{ name: "Abs", note: "absolute value", synonyms: "absolute", arguments: [{ name: "Value" }] },
+	{ name: "Min", synonyms: "minimum", arguments: { name: "...Values" } },
+	{ name: "Max", synonyms: "maximum", arguments: { name: "...Values" } },
+	{ name: "Sqrt", note: "square root", synonyms: "square root", arguments: [{ name: "Value" }] },
+	{ name: "Exp", arguments: [{ name: "Value" }] },
+	{ name: "Ln", note: "natural logarithm", synonyms: "natural logarithm", arguments: [{ name: "Value", suggestions: ["e"] }] },
+	{ name: "Log", note: "base-10 logarithm", synonyms: "base-10 logarithm log10", arguments: [{ name: "Value", suggestions: ["10"] }] },
+	{ name: "Log10", note: "base-10 logarithm", synonyms: "logarithm", arguments: [{ name: "Value", suggestions: ["10"] }] },
 	{ name: "Sin", arguments: [{ name: "Angle Radians", suggestions: ["pi"] }] },
 	{ name: "Cos", arguments: [{ name: "Angle Radians", suggestions: ["pi"] }] },
 	{ name: "Tan", arguments: [{ name: "Angle Radians", suggestions: ["pi"] }] },
-	{ name: "ArcSin", arguments: [{ name: "Value" }] },
-	{ name: "ArcCos", arguments: [{ name: "Value" }] },
-	{ name: "ArcTan", arguments: [{ name: "Value" }] },
-	{ name: "Log", note: "base-10 logarithm", synonyms: "base-10 logarithm", arguments: [{ name: "Value", suggestions: ["10"] }] },
-	{ name: "Ln", note: "natural logarithm", synonyms: "natural logarithm", arguments: [{ name: "Value", suggestions: ["e"] }] },
-	{ name: "Exp", arguments: [{ name: "Value" }] },
-	{ name: "Max", synonyms: "maximum", arguments: { name: "...Values" } },
-	{ name: "Min", synonyms: "minimum", arguments: { name: "...Values" } },
-	{ name: "Sqrt", note: "square root", synonyms: "square root", arguments: [{ name: "Value" }] },
-	{ name: "Sign", arguments: [{ name: "value" }] },
-	{ name: "Abs", note: "absolute value", synonyms: "absolute", arguments: [{ name: "Value" }] },
-	{ name: "IfThenElse", arguments: [{ name: "Condition" }, { name: "Then Value", note: "value if true" }, { name: "Else Value", note: "value if false" }] },
-	{ name: "StopIf", arguments: [{ name: "Condidtion" }] },
-	{ name: "T", note: "Time", synonyms: "time" },
-	{ name: "DT", note: "Step Time", synonyms: "step time" },
+	{ name: "ArcSin", synonyms: "asin", arguments: [{ name: "Value" }] },
+	{ name: "ArcCos", synonyms: "acos", arguments: [{ name: "Value" }] },
+	{ name: "ArcTan", synonyms: "atan", arguments: [{ name: "Value" }] },
+	{ name: "Round", arguments: [{ name: "Value" }] },
+	{ name: "Ceiling", synonyms: "ceil round", arguments: [{ name: "Value" }] },
+	{ name: "Floor", synonyms: "round", arguments: [{ name: "Value" }] },
+	{ name: "Sign", arguments: [{ name: "Value" }] },
+	{ name: "Smooth", note: "N-stage exponential smooth", arguments: [{ name: "Input" }, { name: "Smooth Time" }, { name: "Order", note: "integer 1 to 100" }, { name: "Initial Value" }] },
+	{ name: "Delay", note: "N-stage exponential delay", arguments: [{ name: "Input" }, { name: "Delay Time" }, { name: "Order", note: "integer 1 to 100" }, { name: "Initial Value" }] },
+	{ name: "Lag", note: "fixed time lag / exact time shift", arguments: [{ name: "Input" }, { name: "Lag Time" }, { name: "Initial Value" }] },
+	{ name: "RandomUniform", note: "uniform random value", synonyms: "random uniform", arguments: [{ name: "Minimum" }, { name: "Maximum" }, { name: "Seed", note: "optional; makes this call reproducible" }] },
+	{ name: "RandomNormal", note: "normal random value", synonyms: "random normal gaussian", arguments: [{ name: "Mean" }, { name: "Standard Deviation" }, { name: "Seed", note: "optional; makes this call reproducible" }] },
+	{ name: "RandomTriangular", note: "triangular random value", synonyms: "random triangular", arguments: [{ name: "Minimum" }, { name: "Maximum" }, { name: "Mode" }, { name: "Seed", note: "optional; makes this call reproducible" }] },
+	{ name: "RandomGamma", note: "gamma random value", synonyms: "random gamma", arguments: [{ name: "Shape" }, { name: "Scale" }, { name: "Seed", note: "optional; makes this call reproducible" }] },
+	{ name: "RandomBeta", note: "beta random value", synonyms: "random beta", arguments: [{ name: "Alpha" }, { name: "Beta" }, { name: "Seed", note: "optional; makes this call reproducible" }] },
+	{ name: "T", note: "Current Time", synonyms: "time" },
+	{ name: "DT", note: "Time Step", synonyms: "step time" },
 	{ name: "TS", note: "Start Time", synonyms: "start time" },
 	{ name: "TL", note: "Time Length", synonyms: "time length" },
-	{ name: "TE", note: "Time End", synonyms: "time end" },
-	{ name: "PastMax", synonyms: "max", arguments: [{ name: "Primitive" }, { name: "Period", default: "all time" }] },
-	{ name: "PastMin", synonyms: "min", arguments: [{ name: "Primitive" }, { name: "Period", default: "all time" }] },
-	{ name: "PastMedian", synonyms: "median", arguments: [{ name: "Primitive" }, { name: "Period", default: "all time" }] },
-	{ name: "PastMean", synonyms: "mean", arguments: [{ name: "Primitive" }, { name: "Period", default: "all time" }] },
-	{ name: "PastStdDev", synonyms: "standard deviation", arguments: [{ name: "Primitive" }, { name: "Period", default: "all time" }], desc: "Returns the standard deviation of the values a primitive has taken on over the course of the simulation. The second optional argument is a time window to limit the calculation." },
-	{ name: "PastCorrelation", arguments: [{ name: "Primitive1" }, { name: "Primitive2" }, { name: "Period", default: "all time" }], desc: "Returns the correlation between the values that two primitives have taken on over the course of the simulation. The third optional argument is an optional time window to limit the calculation." },
-	{ name: "Fix", arguments: [{ name: "Value" }, { name: "Period", default: "-1" }], desc: "Takes the dynamic value and forces it to be fixed over the course of the period. If period is -1, the value is held constant over the course of the whole simulation." },
+	{ name: "TE", note: "Time End", synonyms: "time end" }
 ]
 
 class FunctionHelper {
@@ -10084,8 +12211,9 @@ class FunctionHelper {
 	static updateFunctionHelp(cm) {
 		let func = undefined
 		let cursor = cm.getCursor()
-		let line = cm.getLine(cursor.line)
-		const prevStr = line.substring(0, cursor.ch)
+		// Read the complete equation prefix rather than only the current line so
+		// function/argument help continues to work inside multiline expressions.
+		const prevStr = cm.getRange({ line: 0, ch: 0 }, cursor)
 		const bracketStack = []
 		let argIndex = 0
 		for (let index = prevStr.length - 1; index >= 0; index--) {
@@ -10177,7 +12305,7 @@ class Autocomplete {
 				className: "cm-primitive",
 				displayText: `[${name}]`,
 				text: `[${name}]`,
-				note: "primitive",
+				note: "model entity",
 				from: { line: 0, ch: start },
 				to: { line: 0, ch: end },
 				render: Autocomplete.render
@@ -10254,7 +12382,10 @@ class DefinitionEditor extends jqDialog {
 					"Esc": () => {
 						this.dialogParameters.buttons["Cancel"]();
 					},
-					"Enter": () => {
+					"Ctrl-Enter": () => {
+						this.dialogParameters.buttons["Apply"]();
+					},
+					"Cmd-Enter": () => {
 						this.dialogParameters.buttons["Apply"]();
 					},
 					"Shift-Tab": () => {
@@ -10280,7 +12411,7 @@ class DefinitionEditor extends jqDialog {
 		$(this.dialogContent).find(".name-field").keyup((event) => {
 			let newName = stripBrackets($(event.target).val());
 			let nameFree = isNameFree(newName, this.primitive.id);
-			// valid according to insight maker
+			// valid according to the legacy .ssd equation-name rules
 			let validName = validPrimitiveName(newName, this.primitive);
 			// valid for tools StatRes etc.
 			let validToolVarName = isValidToolName(newName);
@@ -10301,7 +12432,7 @@ class DefinitionEditor extends jqDialog {
 						<br/><b>0-9</b> (if not first character)
 					`));
 				} else if (!validName) {
-					// not allowed according to insightmaker
+					// not allowed by the legacy .ssd equation-name rules
 					$(this.dialogContent).find(".name-warning-div").html(warningHtml(`Name cannot contain bracket, parenthesis, or quote`));
 				}
 			}
@@ -10343,7 +12474,8 @@ class DefinitionEditor extends jqDialog {
 				codeSnippetName = func.name;
 				codeTemplate = `${filterFunctionTemplate(func.replacement)}`;
 				let cmClassName = codeTemplate.includes("(") ? "cm-functioncall" : "";
-				codeHelp = `${func.description} ${example}`;
+				const syntaxHelp = func.syntax ? `<b>Syntax</b><pre style="padding:0;margin:0.25em 0 0.6em 0;">${func.syntax}</pre>` : "";
+				codeHelp = `${syntaxHelp}${func.description} ${example}`;
 				codeHelp = codeHelp.replace(/\'/g, "&#39;");
 				codeHelp = codeHelp.replace(/\"/g, "&#34;");
 				result += `<li class = "function-help click-function ${cmClassName}" data-template="${codeTemplate}" title="${codeHelp}">${codeSnippetName}</li>`;
@@ -10394,7 +12526,7 @@ class DefinitionEditor extends jqDialog {
 		}
 		this.primitive = findID(id);
 		if (this.primitive == null) {
-			alert("Primitive with id " + id + " does not exist");
+			alert("Model entity with id " + id + " does not exist");
 			return;
 		}
 		this.show();
@@ -10440,9 +12572,9 @@ class DefinitionEditor extends jqDialog {
 		let referenceHTML = "";
 		if (!(this.primitive.value.nodeName === "Variable" && this.primitive.getAttribute("isConstant") === "true")) {
 			if (referenceList.length > 0) {
-				referenceHTML = "<b>Linked primitives:</b><br/>" + referenceListToHtml(referenceList);
+				referenceHTML = "<b>Linked model entities:</b><br/>" + referenceListToHtml(referenceList);
 			} else {
-				referenceHTML = "No linked primitives";
+				referenceHTML = "No linked model entities";
 			}
 		}
 		$(this.referenceDiv).html(referenceHTML);
@@ -10469,7 +12601,7 @@ class DefinitionEditor extends jqDialog {
 			"Stock": "The initial value of the stock is set in the definition. (The stock's value over time increases or decreases by inflows and outflows.)",
 			"Flow": "The content in a stock will enter or leave through a flow at the rate determined by the definition.",
 			"Variable": "The auxiliary will take on the value calculated from the definition. The value will be recalculated as the simulation progresses.",
-			"Constant": "The parameter will take on the value calculated from the definition. The value will be recalculated as the simulation progresses."
+			"Constant": "The constant will take on the value calculated from the definition. It is treated as state-independent during the simulation."
 		}
 		this.setHelpButtonInfo("definition-help", "Definition Help",
 			`<div style="max-width: 400px;">
@@ -10477,8 +12609,8 @@ class DefinitionEditor extends jqDialog {
 			<b>Key bindings:</b>
 			<ul style="margin: 0.5em 0; padding-left: 2em;">
 				<li>${keyHtml("Esc")} &rarr; Cancel changes</li>
-				<li>${keyHtml("Enter")} &rarr; Apply changes</li>
-				<li>${keyHtml(["Shift", "Enter"])} &rarr; add new line</li>
+				<li>${keyHtml("Enter")} &rarr; Add new line</li>
+				<li>${keyHtml([modifierKey, "Enter"])} &rarr; Apply changes</li>
 				<li>
 				${keyHtml(["Ctrl", "Space"])} &rarr; Show autocomplete definition
 				<ul>
@@ -10534,19 +12666,36 @@ class DefinitionEditor extends jqDialog {
 	}
 	makeApply() {
 		if (this.primitive) {
-			// Handle value
 			let value = this.cmValueField.getValue();
-      setValue2(this.primitive, value);
-      // Handle unit
-      const unit = this.unitField.value.trim();
-			setUnits(this.primitive, unit);
-			// handle name
+			const unit = this.unitField.value.trim();
 			let oldName = getName(this.primitive);
 			let newName = stripBrackets($(this.dialogContent).find(".name-field").val());
-			if (oldName != newName) {
-				if (isNameFree(newName) && validPrimitiveName(newName, this.primitive) && isValidToolName(newName)) {
-					setName(this.primitive, newName);
-					changeReferencesToName(this.primitive.id, oldName, newName);
+
+			if (typeof RunResults !== "undefined" && RunResults.isAdvanceActive()) {
+				let runtimeChange = RunResults.applyAdvanceParameterChange(this.primitive, value);
+				if (!runtimeChange.applied) {
+					let detail = runtimeChange.error ? htmlEscape(runtimeChange.error.message || String(runtimeChange.error)) : "";
+					let message = runtimeChange.reason === "controller-unavailable"
+						? "The Advance simulation is not currently paused at a point where a live value change can be applied. Press Advance once to reach the next pause, then change the value."
+						: `Systemika could not apply this value to the active Advance simulation.${detail ? `<br/><br/>${detail}` : ""}<br/><br/>Live Advance edits must be values/equations accepted by the simulation engine while paused; state-dependent replacements may require ending the current Advance run with Advance to End.`;
+					xAlert(message);
+					return false;
+				}
+				// The simulation engine's paused-run API changes the existing primitive
+				// equation by ID. Name/unit edits are model metadata changes and are left
+				// unchanged until the stepped run has ended.
+				setValue2(this.primitive, value);
+				if (newName !== oldName || unit !== getUnits(this.primitive)) {
+					xAlert("The parameter value was applied to the current Advance run. Name and unit changes are not applied until the Advance run is finished or reset.");
+				}
+			} else {
+				setValue2(this.primitive, value);
+				setUnits(this.primitive, unit);
+				if (oldName != newName) {
+					if (isNameFree(newName) && validPrimitiveName(newName, this.primitive) && isValidToolName(newName)) {
+						setName(this.primitive, newName);
+						changeReferencesToName(this.primitive.id, oldName, newName);
+					}
 				}
 			}
 
@@ -10588,125 +12737,6 @@ function hideAndPrint(elementsToHide) {
 		$(element).show();
 	}
 }
-class MacroDialog extends jqDialog {
-	constructor() {
-		super();
-		this.setTitle("Macro");
-		this.seed = "";
-		this.setHtml(`
-		<div style="display: flex;">
-			<div style="min-width: 400px;" >
-				<textarea class="macro-text enter-apply" cols="30" rows="10"></textarea>
-			</div>
-			<div style="padding:0; margin-left: 1em;">
-				${this.renderHelpButtonHtml("macro-help")}
-				<table class="modern-table zebra" title="SetRandSeed makes stochstics simulations reproducable." style="margin-top: 1em;">
-					<tr>
-						<td style="padding:1px;">
-							Seed = <input class="seed-field" type="number" />
-						</td>
-					</tr>
-					<tr>
-						<td>
-							<button class="set-seed-button" disabled>SetRandSeed</button>
-						</td>
-					</tr>
-				</table>
-			</div>
-		</div>
-		`);
-
-		this.setHelpButtonInfo("macro-help", "Macro Help", `<div style="max-width: 400px;">
-			<p>Macros allow you to define code that can be used in the model. For example, you can here define your own functions, or set a seed value to make the simulation reproducible.</p>
-			<b>Examples:</b>
-			<div class="accordion">
-				<h3>Define single-line function</h3>
-				<div>
-					<p class="example-code">
-						myFn(a, b, c) &lt;- sin((a+b+c)/(a*b*c))
-					</p>
-				</div>
-				<h3>Define multi-line function</h3>
-				<div>
-					<p class="example-code">
-						Function myFn(a, b, c) <br/>
-						x &lt;- (a+b+c) <br/>
-						y &lt;- (a*b*c) <br/>
-						return sin(x/y) <br/>
-						End Function <br/>
-					</p>
-				</div>
-				<h3>Set seed for reproducible stochastic simulations.</h3>
-				<div>
-					<p>To make a stochastic simulation model <i>reproducible</i>, you have to lock the <i>seed</i> for the random number generators in the model. Then the same sequences of random numbers will be generated for each simulation run. This can be done with the following line.</p>
-					<div class="example-code">SetRandSeed(37)</div>
-					<p>By changing the argument, you will get another (reproducible) simulation run.</p>
-				</div>
-			</div>
-			<br/>
-			<b>Key bindings (for macro text input):</b>
-			<ul style="margin: 0.5em 0;">
-				<li>${keyHtml("Esc")} &rarr; Cancels changes</li>
-				<li>${keyHtml("Enter")} &rarr; Applies changes</li>
-				<li>${keyHtml(["Shift", "Enter"])} &rarr; Adds new line</li>
-			</ul>
-		</div>`);
-
-		this.cmMacroField = new CodeMirror.fromTextArea(document.getElementsByClassName("macro-text")[0],
-			{
-				mode: "stochsd-dynamic-mode",
-				theme: "stochsdtheme resize",
-				lineWrapping: false,
-				lineNumbers: false,
-				matchBrackets: true,
-				extraKeys: {
-					"Esc": () => {
-						this.dialogParameters.buttons["Cancel"]();
-					},
-					"Enter": () => {
-						this.dialogParameters.buttons["Apply"]();
-					},
-					"Ctrl-Space": "autocomplete"
-				},
-				hintOptions: {
-					hint: (cm, options) => Autocomplete.getCompletions(cm, options, this.primitive)
-				}
-			}
-		);
-		this.cmMacroField.refresh()
-
-		this.setSeedButton = $(this.dialogContent).find(".set-seed-button");
-		$(this.dialogContent).find(".seed-field").keyup((event) => {
-			this.seed = $(event.target).val();
-			if (event.key === "Enter" && this.seed.length !== 0) {
-				this.setSeedButton.click();
-			} else {
-				this.setSeedButton.attr("disabled", this.seed.length === 0);
-			}
-		});
-		this.setSeedButton.click((event) => {
-			const macro = this.cmMacroField.getValue();
-			this.cmMacroField.setValue(`${macro}\nSetRandSeed(${this.seed})`);
-			this.cmMacroField.focus();
-		});
-		this.bindEnterApplyEvents();
-	}
-	beforeShow() {
-		this.cmMacroField.setValue(getMacros());
-	}
-	afterShow() {
-		this.updateSize();
-		this.cmMacroField.refresh()
-	}
-	resize() {
-		this.updateSize();
-	}
-	updateSize() { }
-	makeApply() {
-		setMacros(this.cmMacroField.getValue());
-	}
-}
-
 class TextAreaDialog extends DisplayDialog {
 	constructor(id) {
 		super(id);
@@ -10765,6 +12795,65 @@ class TextAreaDialog extends DisplayDialog {
 	}
 }
 
+class UnitCheckDialog extends jqDialog {
+	constructor() {
+		super();
+		this.setTitle("Unit Check Report");
+	}
+	beforeCreateDialog() {
+		this.dialogParameters.buttons = {
+			"Close": () => { $(this.dialog).dialog('close'); },
+			"Print Report": () => { printContentInNewWindow($(this.dialogContent).html()); }
+		};
+		this.dialogParameters.width = 780;
+		this.dialogParameters.height = 560;
+		this.dialogParameters.resizable = true;
+	}
+	renderIssueTable(title, issues, severity) {
+		if (!issues.length) return "";
+		const safe = value => htmlEscape(String(value == null ? "" : value));
+		const label = severity === "error" ? "Unit inconsistencies" : "Could not verify";
+		return `
+			<h3 class="equation-list-header">${safe(title)}</h3>
+			<table class="modern-table zebra" style="width:100%;">
+				<tr><th>Entity</th><th>Type</th><th>Declared Unit</th><th>${safe(label)}</th></tr>
+				${issues.map(issue => `<tr>
+					<td>${safe(issue.entityName)}</td>
+					<td>${safe(issue.entityType)}</td>
+					<td style="font-family:monospace;">${safe(issue.declaredUnit || "—")}</td>
+					<td>${safe(issue.message)}</td>
+				</tr>`).join("")}
+			</table>`;
+	}
+	beforeShow() {
+		let report;
+		try {
+			report = SystemikaUnits.checkCurrentModel();
+		} catch (error) {
+			this.setHtml(`<p><b>Unit checking could not run.</b></p><p>${htmlEscape(error && error.message ? error.message : String(error))}</p>`);
+			return;
+		}
+		const errorCount = report.errors.length;
+		const unknownCount = report.unknowns.length;
+		let statusHtml;
+		if (errorCount === 0 && unknownCount === 0) {
+			statusHtml = `<p><b>No unit inconsistencies found.</b> All ${report.checkedEntityCount} checkable model entities were verified.</p>`;
+		} else if (errorCount === 0) {
+			statusHtml = `<p><b>No unit inconsistencies found among the items Systemika could verify.</b> ${unknownCount} item${unknownCount === 1 ? "" : "s"} could not be checked completely.</p>`;
+		} else {
+			statusHtml = `<p><b>${errorCount} unit inconsistenc${errorCount === 1 ? "y" : "ies"} found.</b> ${unknownCount ? `${unknownCount} additional item${unknownCount === 1 ? "" : "s"} could not be checked completely.` : ""}</p>`;
+		}
+		const principles = `<p style="max-width:740px;">Systemika checks units strictly. It does not convert units or treat different symbols as equivalent. For example, <code>USD</code> and <code>$</code> are different units. Algebraically equivalent expressions such as <code>Person/Year</code> and <code>Person*Year^-1</code> are treated as the same unit.</p>`;
+		this.setHtml(`
+			<h3 class="equation-list-header">Unit Check Report</h3>
+			<table class="modern-table zebra"><tr><td>Model time unit</td><td style="font-family:monospace;">${htmlEscape(report.timeUnits || "Not specified")}</td></tr><tr><td>Entities checked</td><td>${report.checkedEntityCount}</td></tr><tr><td>Errors</td><td>${errorCount}</td></tr><tr><td>Could not verify</td><td>${unknownCount}</td></tr></table>
+			${statusHtml}${principles}
+			${this.renderIssueTable("Unit inconsistencies", report.errors, "error")}
+			${this.renderIssueTable("Could not verify", report.unknowns, "unknown")}
+		`);
+	}
+}
+
 class EquationListDialog extends jqDialog {
 	constructor() {
 		super();
@@ -10799,19 +12888,6 @@ class EquationListDialog extends jqDialog {
 		const day = date.getDate().toString().padStart(2, "0");
 		const fullDate = `${date.getFullYear().toString().substring(2, 4)}-${month}-${day} (yy-mm-dd)`;
 
-		/** Find seed */
-		let isSeedSet = false;
-		let seed = "";
-		const macro = getMacros();
-		const index = macro.lastIndexOf("SetRandSeed");
-		if (index !== -1) {
-			isSeedSet = true;
-			const c = macro.substring(index, macro.length);
-			const regExp = /\(([^)]+)\)/;
-			const matches = regExp.exec(c);
-			seed = matches[1];
-		}
-
 		const specs = [
 			["Time Unit", getTimeUnits()],
 			["Start", getTimeStart()],
@@ -10819,10 +12895,6 @@ class EquationListDialog extends jqDialog {
 			["DT", getTimeStep()],
 			["Method", getAlgorithm() === "RK1" ? "Euler" : "RK4"]
 		];
-		if (isSeedSet) {
-			specs.push(["Seed", seed]);
-		}
-
 		return (`
 			<h3 class="equation-list-header">${fileName}</h3>${fullDate}</br>
 			<h3 class="equation-list-header	">Specifications</h3>
@@ -10893,11 +12965,14 @@ class EquationListDialog extends jqDialog {
 		}
 
 		const Variables = primitives("Variable");
-		let variableHtml = "";
-		if (Variables.length > 0) {
-			variableHtml = this.renderPrimitiveListHtml({
-				title: "Auxiliaries & Parameters",
-				primitives: Variables,
+		const Auxiliaries = Variables.filter(prim => prim.getAttribute("isConstant") !== "true");
+		const Constants = Variables.filter(prim => prim.getAttribute("isConstant") === "true");
+
+		let auxiliaryHtml = "";
+		if (Auxiliaries.length > 0) {
+			auxiliaryHtml = this.renderPrimitiveListHtml({
+				title: "Auxiliaries",
+				primitives: Auxiliaries,
 				tableColumns: [
 					{ header: "Name", cellFunc: (prim) => { return makePrimitiveName(getName(prim)); } },
 					{ header: "Value", cellFunc: getValue, style: "font-family: monospace;" }
@@ -10905,12 +12980,24 @@ class EquationListDialog extends jqDialog {
 			});
 		}
 
-		const Converters = primitives("Converter");
-		let converterHtml = "";
-		if (Converters.length > 0) {
-			converterHtml = this.renderPrimitiveListHtml({
-				title: "Converter",
-				primitives: Converters,
+		let constantHtml = "";
+		if (Constants.length > 0) {
+			constantHtml = this.renderPrimitiveListHtml({
+				title: "Constants",
+				primitives: Constants,
+				tableColumns: [
+					{ header: "Name", cellFunc: (prim) => { return makePrimitiveName(getName(prim)); } },
+					{ header: "Value", cellFunc: getValue, style: "font-family: monospace;" }
+				]
+			});
+		}
+
+		const Lookups = primitives("Converter");
+		let lookupHtml = "";
+		if (Lookups.length > 0) {
+			lookupHtml = this.renderPrimitiveListHtml({
+				title: "Lookups",
+				primitives: Lookups,
 				tableColumns: [
 					{ header: "Name", cellFunc: (prim) => { return makePrimitiveName(getName(prim)); } },
 					{ header: "Data", cellFunc: getValue, style: "font-family: monospace; max-width: 400px; word-break: break-word;" },
@@ -10918,9 +13005,9 @@ class EquationListDialog extends jqDialog {
 				]
 			});
 		}
-		const numberOfPrimitives = Stocks.length + Flows.length + Variables.length + Converters.length;
+		const numberOfModelEntities = Stocks.length + Flows.length + Auxiliaries.length + Constants.length + Lookups.length;
 
-		if (numberOfPrimitives == 0) {
+		if (numberOfModelEntities == 0) {
 			this.setHtml("This model is empty. Build a model to show equation list");
 			return;
 		}
@@ -10934,9 +13021,10 @@ class EquationListDialog extends jqDialog {
 				<div style="padding-left: 32px; ">
 					${stockHtml}
 					${flowHtml}
-					${variableHtml}
-					${converterHtml}
-					<br/>Total of ${numberOfPrimitives} primitives
+					${auxiliaryHtml}
+					${constantHtml}
+					${lookupHtml}
+					<br/>Total of ${numberOfModelEntities} model entities
 				</div>
 			</div>
 		`;
@@ -10945,10 +13033,10 @@ class EquationListDialog extends jqDialog {
 	}
 }
 
-// Override the message function used by the insight maker engine so that we can catch error popups
+// Compatibility alert hook retained for inherited editor/model infrastructure
 if (typeof mxUtils == "undefined") {
 	window.mxUtils = {};
 	window.mxUtils.alert = function (message, closeHandler) {
-		xAlert("Message from engine:  " + message, closeHandler);
+		xAlert("Systemika message:  " + message, closeHandler);
 	}
 }

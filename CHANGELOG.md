@@ -1,3 +1,472 @@
+# Pre-release development history leading to Systemika Studio 1.0.0
+
+## Final pre-release change — Question-mark visibility toggle
+
+- Added a vertical-toolbar **Hide/Unhide Question Marks (Q)** control using the supplied hidden-eye icon.
+- Added the single-key **Q** shortcut and documented it in built-in and packaged help.
+- Hiding the markers is display-only: definition checking, error reporting, and simulation validation are unchanged.
+- Added two regression checks; the suite now passes **233/233** tests.
+
+## Systemika 0.9.9 — Single-run Histogram visual polish
+
+
+- Changed one-run Histogram bars from solid black to a light gray fill (`#d9d9d9`) for a calmer classroom/print presentation.
+- Added crisp black borders around each non-empty one-run histogram bin.
+- Kept the proven single-run jqPlot `step + fill` renderer unchanged; borders are drawn after rendering rather than re-enabling jqPlot's fragile one-series `fillAndStroke` path.
+- Comparative Histograms are unchanged and continue to use translucent colored overlays, outlines, common bins, and the run legend.
+- Histogram markers remain disabled.
+
+## Systemika 0.9.8 — Single-run Histogram legend fix
+
+- Reproduced the exact title-and-frame-only single-run Histogram failure in a real browser with jqPlot 1.0.8.
+- Root cause: the Histogram configured the legend as hidden (`show: false`) while still requesting `placement: outsideGrid`; jqPlot then attempted to detach a legend element that had never been created and aborted before axes/series drawing.
+- `outsideGrid` legend placement is now enabled only when two or more runs are actually being compared.
+- Single-run Histograms use a hidden legend with no outside-grid placement and render normally.
+- Histogram marker suppression and multi-run translucent overlays are unchanged.
+
+## Systemika 0.9.7 — Single-run Histogram renderer restoration
+
+- Reproduced the one-run Histogram failure directly in jqPlot 1.0.8.
+- Restored the proven pre-comparison (0.9.3) `step + fill` renderer whenever exactly one run is displayed.
+- Kept `showMarker: false` so the three point markers per bar remain removed.
+- Kept the comparative overlay renderer only for two or more selected runs, including translucent fills and the run legend.
+- The 0.9.6 one-series `fillAndStroke` configuration was removed because jqPlot 1.0.8 throws an internal draw-time exception with that configuration.
+- Automated regression suite: 229/229 passing.
+
+## Systemika 0.9.6 — Single-run Histogram rendering
+
+- Fixed single-run Histogram rendering under jqPlot 1.0.8.
+- Single-run histograms retain the model entity colour with a solid fill.
+- Transparency is applied only when two or more runs are overlaid for comparison.
+- This avoids jqPlot's `fillAlpha` failure on CSS colour keywords such as `black`.
+- Histogram point markers remain disabled.
+- Automated regression suite: 229/229 passing.
+
+## Systemika 0.9.5 — Histogram reliability
+
+- Fixed single-run histograms so the current run renders even when the comparison selection stores its user-facing run label.
+- Removed jqPlot point markers from histogram bars; histogram bars now render without the three distracting marker dots.
+
+## Systemika 0.9.4 — Comparative histograms
+
+- Added the same **Runs to compare** selector used by other comparison outputs to Histogram properties.
+- Histograms from multiple selected runs are overlaid on the same axes with translucent fills, distinct outlines, and run labels.
+- All selected runs share one set of lower/upper bounds and bin edges so overlapping bars represent the same value intervals.
+- Automatic bounds are derived from the combined data across all selected runs; manual bounds and the selected number of bars apply to every run.
+- Histogram run selections now participate in run rename/delete, new-run auto-selection, and Advance selection restore logic.
+- Added comparative-Histogram regression coverage; full automated suite: **226/226 passing**.
+
+## Systemika 0.9.3 — provenance and window cleanup
+
+- Restored the compact top-right provenance links: Systemika | Editor lineage: StochSD / InsightMaker.com.
+- Expanded About Systemika to acknowledge Insight Maker as part of the historical lineage while clarifying that Systemika uses its own native simulation engine.
+- Removed an orphan HTML comment-closing marker that rendered as a stray `-->` at the top-left of the application window.
+
+## Systemika 0.9.2 — Release-readiness help and interface cleanup
+
+- Rebuilt the Help menu around Systemika classroom use: Getting Started, Keyboard Shortcuts, Functions & Equations, Unit Checking, Preferences, About, License, and Third-party Notices.
+- Removed obsolete StochSD support/forum links, StochSD/plugin manuals, Full Potential CSS material, and restart/developer-oriented items from the Help menu.
+- Removed the hidden `.` shortcut that exposed the legacy Optim/Sensi/StatRes/ParmVar plugin menu.
+- Restored the **Histogram (H)** output tool to the top toolbar.
+- Rewrote About and License text to reflect the current native engine/model layers and AGPLv3/StochSD provenance without stale `0.6` or “All rights reserved” wording.
+- Cleaned Preferences wording so it uses classroom-facing Systemika terminology rather than internal class names.
+- Cleaned the Third-party Notices screen to list libraries currently bundled by the application and removed obsolete NW.js/jStat/Springy/ANTLR/Insight-Maker-license entries.
+- Aligned jqPlot CSS with the active jqPlot 1.0.8 runtime and removed an obsolete commented 1.0.9 script block.
+- Added `SYSTEMIKA_HELP.md` and release-cleanup regression coverage.
+- Full automated suite: **219/219 passing**.
+
+## Systemika 0.9.1 — Classroom usability pass
+
+- Made the red **Unsaved Changes** toolbar indicator actionable: clicking it now offers **Save**, **Save As...**, or **Cancel**.
+- Prevented duplicate directed Links between the same source and target, including duplicate-Link creation through copy/paste. Reverse-direction Links remain valid because they represent a different causal direction.
+- Elevated selected SVG entities and their editing handles above HTML plot overlays so Link handles remain accessible near/over plots.
+- Added **Ctrl+Shift+S** (**Cmd+Shift+S** on macOS) for **Save As**, including the shortcut in the tooltip.
+- Added **R** for **Rotate Name**, including the shortcut in the tooltip.
+- Changed new Time/Compare Plot defaults to **Numbered Lines = on**, **Colour from Model Entity = off**, and **Show Data when hovering = on**.
+- Text Box copy/paste now preserves the text exactly instead of applying model-entity unique-name suffixes.
+- Removed explanatory warnings/notes from Simulation Settings while an Advance run is active; locked settings remain visibly disabled without pedagogical commentary.
+- Time-based plot x-axes now include the model time unit, e.g. **Time (Year)**.
+- Added focused usability regression coverage; full automated suite: **212/212 passing**.
+
+## Systemika 0.9.0 — Strict unit consistency reporting
+
+- Added the independently written `systemika-units.js` unit checker.
+- Replaced the old `Check Units: Yes/No` toggle with a read-only **Check Units → Report** action.
+- Unit symbols are strict and case-sensitive: no conversions, synonyms, equivalence tables, suggestions, or automatic corrections.
+- Algebraically equivalent forms are normalized, e.g. `Person/Year` and `Person*Year^-1`.
+- Checks declared units against equation dimensions for Stocks, Flows, Auxiliaries, and Constants, and propagates declared Lookup output units into dependent equations.
+- Checks connected Flow units against `Stock unit / model time unit`.
+- Added unit rules for all native mathematical, conditional, programming, simulation-time, and statistical functions.
+- Missing information is reported as **Could not verify**, never silently accepted as correct.
+- Unit checking does not change the model and does not block simulation.
+- Added `SYSTEMIKA_UNITS.md` with the complete strict-checking specification.
+- Added 19 dedicated unit-check regression tests; full automated suite: **204/204 passing**.
+
+## Native engine/editor 0.8.5 — Optional seed in click templates
+
+- Kept statistical function names clean in the Function Help list.
+- Kept full random-function signatures, including `[Seed]`, in hover tooltips.
+- Updated click-to-insert templates so the optional seed placeholder also appears in the Equation Editor, for example `RandomUniform(Minimum, Maximum, [Seed])`.
+- The `[Seed]` segment is a template placeholder: replace it with a numeric seed for reproducibility, or remove the optional argument when no fixed seed is wanted.
+- No numerical engine semantics changed from 0.8.4.
+
+## Native engine/editor 0.8.4 — Multiline equations and corrected function help
+
+- Reverted the 0.8.3 function-list presentation: function names are clean again and `IfThenElse` is restored to the Conditional Function category.
+- Statistical-function hover tooltips now show the complete call syntax, including the optional seed notation such as `RandomUniform(Minimum, Maximum, [Seed])`.
+- Autocomplete and the visible function list no longer use full signatures as function names.
+- The equation editor now uses Enter to insert a line break. Ctrl+Enter on Windows/Linux and Cmd+Enter on macOS applies the equation.
+- Multiline equations require no new syntax: the native parser already treats line breaks as whitespace, so nested `IfThenElse(...)` calls can be formatted across multiple lines.
+- Added regression coverage for multiline nested conditionals and the revised editor/help behavior.
+- Full automated suite: **185/185 passing**.
+
+## Native engine 0.8.2 — Fixed Lag and optional random seeds
+
+- Redefined `Lag(input, lag time, initial value)` as a fixed time lag / pure time shift: at simulation time `t`, it returns the input from `t - lag time`.
+- `Lag` uses the supplied initial value before sufficient history exists and linearly interpolates historical input when the requested lag falls between stored simulation points.
+- Added an optional final `seed` argument to `RandomUniform`, `RandomNormal`, `RandomTriangular`, `RandomGamma`, and `RandomBeta`.
+- A seeded random-function call is reproducible across model runs; an unseeded call uses a fresh automatically generated run seed.
+- Normal UI runs no longer read a legacy model-level `RandomSeed` setting; reproducibility is expressed directly in each random function.
+- Updated Function Help, autocomplete, validation fixtures, and engine documentation.
+
+## Native engine 0.8.1 — Startup hardening
+
+- Fixed a startup race where early toolbar initialization could evaluate the `RunResults` class while its lexical binding was still in the JavaScript temporal dead zone.
+- Changed the internal blank-editor template to use a valid `SystemikaModel` root, so the strict model loader no longer throws during normal startup.
+- Direct `file://` launches now skip Service Worker registration, which is unsupported for file origins, instead of emitting an uncaught startup exception.
+- Added browser-level startup smoke testing for both direct `start.html` and local-server/desktop-style launch paths.
+- Retained all 0.8.0 programming and statistical functions unchanged.
+- Full automated suite: **178/178 passing**.
+
+## Native engine 0.8.0 — Programming and statistical functions
+
+- Added stateful programming functions: `Smooth(input, smooth time, order, initial value)`, `Delay(input, delay time, order, initial value)`, and `Lag(input, lag time, initial value)`.
+- `Smooth` and `Delay` use N-stage exponential pipelines integrated by the same Euler/RK4 solver as model Stocks; `Lag` is first-order.
+- Added statistical functions: `RandomUniform`, `RandomNormal`, `RandomTriangular`, `RandomGamma`, and `RandomBeta`.
+- Random call sites draw once per integration step and hold the underlying random variate constant across RK4 intermediate stages.
+- Added engine-level random seeds. Supplying `randomSeed` reproduces a stochastic run exactly; automatically generated seeds are returned in results and stored in run metadata.
+- Added parameter validation for smoothing/delay times, orders, and statistical distribution parameters.
+- Updated function help, autocomplete, and stochastic-function detection in the equation editor.
+- Added analytical/reproducibility regression coverage for all new function families.
+- Full automated suite: **175/175 passing**.
+
+## Native engine/editor 0.7.0 — Stability and validation
+
+- Added 15 permanent `.ssd` validation models covering constant flows, exponential growth/decay, stock transfer, auxiliary/constant evaluation, linear/discrete Lookups, `IfThenElse`, multiple flows, goal seeking, nonnegative stocks, Euler/RK4 behavior, and Link polarity.
+- Added automated numerical expectations for the permanent validation models.
+- Added explicit `Division by zero` and `Modulo by zero` engine errors.
+- Added a two-million-integration-step guard to prevent accidental simulation settings from freezing the UI.
+- Added a clear error when simulation settings are unavailable.
+- Hardened `.ssd` loading to reject non-Systemika XML and malformed/multiple model roots before editor synchronization.
+- Missing simulation settings in otherwise valid models are repaired from current Systemika defaults during normalization.
+- Hardened saving so incomplete Links are never persisted and a Ghost with a missing source cannot crash the save operation.
+- Removed the save writer's dependency on a fully initialized visual object for Flow/Link semantics.
+- Added save-integrity tests covering all seven canonical model entities and critical attributes such as Link polarity, Lookup data, Ghost source, Flow endpoints, and simulation settings.
+- Full automated suite: **169/169 passing**.
+
+## Native engine/editor 0.6.0
+
+- Replaced the remaining `mxShim.js` compatibility layer with independently written `systemika-model-graph.js`.
+- Removed unused inherited `Sanitize.js` and `Updater.js`; neither had active callers in Systemika.
+- Added Systemika-owned XML loading, node subscriptions, model cloning, Link/Flow endpoint reconstruction, and limited legacy `.ssd` normalization.
+- Removed the `OpenSystemDynamics/src/insightmaker/` directory entirely.
+- Renamed the active model writer class to `SystemikaModelDocument`; the historical `InsightMakerModel` XML outer tag is retained only for `.ssd` compatibility.
+- Added 0.6-specific graph/loading and source-audit regression tests.
+- Added `SYSTEMIKA_SOURCE_AUDIT.md`.
+
+## Native engine/editor 0.5.1
+
+- Fixed a 0.5.0 Link-creation freeze caused by the new model API emitting position-change events while connector endpoints were still being constructed.
+- Restored the established connector geometry semantics: `setSourcePosition()` and `setTargetPosition()` are silent low-level writes; moving a completed connector with `setPosition()` emits exactly one position update.
+- Removed the obsolete `Position got updated` debugging alert from the connection visual.
+- Restored size writes to their previous non-notifying behavior to avoid unintended editor callbacks during geometry setup.
+- Added regression coverage for premature connector position events and the blocking debug alert.
+- Full automated suite: **154/154 passing**.
+
+## Native engine/editor 0.5.0
+
+- Replaced inherited `insightmaker/Utilities.js` with the independently written `systemika-model-utils.js`.
+- Replaced the Systemika-used portion of inherited `insightmaker/API/API.js` with the independently written `systemika-model-api.js`.
+- Deleted both inherited files and removed their startup imports.
+- Added canonical model-layer aliases for Auxiliary, Constant, and Lookup while preserving legacy `Variable` and `Converter` tags only for `.ssd` file compatibility.
+- Deliberately did not recreate unsupported legacy API features for agents, states/actions, folders, sliders, and other non-Systemika entities.
+- Added behavioral regression coverage for canonical entity creation/querying, Link endpoint storage, Lookup mapping, and simulation settings.
+- Reduced the remaining Insight Maker-derived editor/model files from five to three (`mxShim.js`, `Sanitize.js`, `Updater.js`), about 755 lines total.
+- Full automated suite: **152/152 passing**.
+
+## Native engine/editor 0.4.2
+
+- Updated both source/portable and packaged desktop builds to Electron 44.3.0, pinned to the exact same runtime version.
+- Linux source launcher now detects and replaces a stale Electron runtime instead of silently reusing an older installed copy.
+- Linux source launcher installs runtime dependencies without npm audit/funding noise; dependency security is handled by the pinned supported runtime rather than `npm audit fix --force`.
+- Restored Link Properties with explicit polarity choices: Unspecified, Positive (+), and Negative (−).
+- Double-clicking a Link opens Link Properties.
+- Pressing L while exactly one Link is selected opens Link Properties; otherwise L continues to start Link creation.
+- Link polarity is stored on the Link and displayed beside its arrowhead.
+- Added Electron-runtime and Link-polarity regression coverage.
+
+## Native engine/editor 0.4.1
+
+- Fixed Lookup link attachment after the editor migration.
+- Restored a Systemika-owned directed-link helper used by Lookup attachment and equation references.
+- Enforced the Lookup rule of at most one incoming Link while allowing outgoing Links.
+- Lookup Source now follows its incoming Link only and falls back to Time when disconnected.
+- Incomplete Links released on empty canvas are explicitly deleted, preventing hanging links and Undo/Delete corruption.
+
+## Systemika native engine / independence milestone 0.4.0
+
+### Changed
+- Replaced inherited `insightmaker/Localization.js` with `systemika-localization.js`.
+- Replaced inherited `insightmaker/Variables.js` with `systemika-entities.js`.
+- Reduced the remaining Insight Maker-derived editor/model files from seven to five.
+- Established canonical Systemika model terminology: Stock, Flow, Link, Auxiliary, Constant, Lookup, Ghost.
+- Kept `Variable` and `Converter` only as legacy `.ssd` storage tags for backward compatibility.
+- Changed Lookup help/preferences and generic model-selection language to use Systemika terminology.
+- Split Equation List output into separate Auxiliaries, Constants, and Lookups sections.
+- Removed agent/state/action templates from the active Systemika entity definition layer.
+- Added terminology/independence regression coverage. Full automated suite: 137/137 passing.
+
+## Systemika native engine 0.3.1
+
+### Fixed
+- Fixed normal simulation startup after removal of the legacy Insight Maker engine. `RunResults.stopSimulation()` no longer falls back to the deleted `simulate` controller.
+- Replaced residual simulation lifecycle compatibility helpers with native `SystemikaEngine` / `RunResults` equivalents.
+- Removed all active references to the legacy `simulate` global from the Systemika editor/API startup path.
+- Added regression coverage for this failure. Full automated suite: 134/134 passing.
+
+## Systemika native engine 0.3.0
+
+### Changed
+- Removed the legacy Insight Maker numerical simulation engine, formula parser, scheduler, random/statistical libraries, and simulation resources from the source package and startup path.
+- The legacy global `runModel()` entry point now routes to the native Systemika engine for compatibility.
+- Removed dormant StochSD macro and random-function hooks from the active Systemika editor.
+- Equation-list output no longer inspects stochastic seed macros.
+
+# Unreleased — Native engine integration preview
+
+- Added the independently written Systemika native simulation engine (`OpenSystemDynamics/src/systemika-engine.js`).
+- Added Euler (RK1) and RK4 integration for stocks and flows, including full intermediate-stage re-evaluation for RK4.
+- Added a compact expression parser/evaluator with primitive references, basic mathematics, comparisons, logic, time functions, and `IfThenElse`.
+- Added linear/discrete lookup support, dependency/cycle validation, pause/resume results compatibility, and state-independent interactive parameter changes.
+- Switched Systemika **Run** and **Advance** workflows to `SystemikaEngine.runCurrentModel()`.
+- Added asynchronous browser chunk callbacks so Run/Pause and Advance remain responsive while the native engine is active.
+- Replaced the Insight Maker-oriented equation-editor function help and autocomplete with the deliberately restricted native Systemika function set.
+- Unsupported functions such as random distributions, delays/smoothing, Pulse/Step/Ramp, historical/statistical functions, StopIf, macros, and user-defined functions are no longer offered by the equation editor.
+- Added `SYSTEMIKA_ENGINE.md` and expanded native-engine regression tests. Full automated suite: 131/131 passing.
+- Insight Maker simulation files remain temporarily in the source tree because inherited editor/model infrastructure still depends on parts of that code; removing those remaining dependencies is a separate migration stage.
+
+# Internal desktop packaging milestone — September 2026
+
+- Added the Linux AppImage launcher installer (`INSTALL_SYSTEMIKA_LINUX_LAUNCHER.sh`) and launcher template (`Systemika-Studio.desktop`) to the source root.
+- Added `LINUX_INSTALLATION_GUIDE.md`, a beginner-friendly walkthrough for building the AppImage, installing the Applications-menu/Desktop launcher, updating, uninstalling, and troubleshooting.
+- Fixed an infinite localhost redirect loop in the Windows desktop launcher when serving nested `index.html` pages.
+- The embedded web server now serves resolved files directly instead of delegating nested index routes to Go `http.FileServer`.
+- Added Windows launcher route regression coverage for the main wrapper, analyser, and model editor entry points.
+- Added the desktop browser heartbeat so the private localhost server can shut down after the application window is closed.
+
+# Internal Windows packaging milestone — September 2026
+
+- Fixed Windows first-run shortcut installation when an existing Systemika Studio session is already active.
+- Added post-creation verification for Desktop and Start Menu shortcuts.
+
+# Systemika 2026.09.11 — Interface revision 22
+
+- Moved Number Box, Table, Time Plot, and XY Plot to the left of the simulation/run controls in the top toolbar.
+- Commented out the Simulation Settings and Macros menu entries without removing their underlying source code, so they can be restored later.
+- Replaced the Cut and Colour toolbar artwork with the user-supplied SVG icons.
+- Replaced the Run artwork with a compact green play icon; Pause behavior and artwork remain unchanged while a simulation is active.
+
+# Systemika 2026.09.11 — Interface revision 21
+
+- Restored Select, Delete, Undo, Redo, Cut, Copy, Paste, and Colour to the horizontal top toolbar.
+- Moved Number Box, Table, Time Plot, and XY Plot to the top toolbar immediately after the simulation/run controls.
+- Simplified the left model toolbar to a single column containing only model-construction and diagram-editing tools.
+- Fixed vertical-toolbar tooltips so they render above the modeling canvas instead of being clipped beneath it.
+
+# Systemika 2026.09.11 — Interface revision 20
+
+- Split the toolbar: model-building/editing/display tools now use a compact two-column vertical toolbar on the left; simulation/run controls remain in the horizontal bar at the top.
+- Removed the Colour menu and added a Colour palette tool to the vertical toolbar.
+- Added internal model Cut/Copy/Paste controls and Ctrl/Cmd+X/C/V shortcuts. Copied primitives receive unique names such as `Capital 1`, and formulas/ID references within copied structures are remapped to the duplicated primitives.
+- Firefox and Safari now share the permanent status-bar guidance: “Firefox and Safari are not fully supported: use Chrome or Edge for full file and run management.”
+- Updated Safari limited-mode handling to suppress repeated unsupported run-management alerts, matching Firefox.
+- Corrected three stale tooltip assertions; the complete automated test suite is green.
+
+# Systemika 2026.09.11 — Firefox release polish
+- Firefox compatibility guidance now lives permanently in the status bar below the toolbar: “Firefox: use Chrome, Edge, or Chromium for full file and run management.”
+- Web branding is normalized to **Systemika Studio** (title case) throughout. The browser tab title is always exactly **Systemika Studio**, with no storage-mode, filename, or save-time suffix.
+
+- Repeated Firefox limitation/error dialogs are suppressed. Save/Save As no longer repeats the same compatibility explanation while the persistent status-bar notice is visible.
+- **Manage Runs** controls are disabled in Firefox and use a nonintrusive tooltip instead of opening unsupported-storage error dialogs.
+- Chromium project-file and persistent `Runs/*.sysrun` behavior is unchanged.
+
+# Systemika 2026.09.11 — WebApp project-storage correction
+
+- Corrected Chromium WebApp capability detection so a `file://` editor iframe no longer attempts a forbidden native file/directory picker and throws `Cross origin sub frames aren't allowed to show a file picker`.
+- Added a dependency-free localhost WebApp launcher (`npm run web` and platform scripts). Serving the wrapper and OpenSystemDynamics editor from one localhost origin enables the existing project-directory `.ssd` + `Runs/*.sysrun` backend in supported Chromium browsers.
+- Browser Storage Mode now records the concrete reason full project storage is unavailable and gives context-specific guidance.
+- Firefox remains deliberately limited to browser model storage/current in-memory run data because it does not expose the required writable local-directory picker API; Systemika does not create a separate Firefox-only persistent run repository.
+
+# Systemika 2026.09.11 — Revision 19
+
+- Unsaved-change state is now derived from the exact last-saved model XML snapshot. Undoing all edits back to that snapshot removes the red **Unsaved Changes** indicator; redoing away from it restores the indicator.
+- The saved-history baseline is preserved across Systemika's internal reload/restart cycle and fresh models receive an explicit clean baseline.
+- Successful saves record the exact XML that was written, avoiding false clean/dirty states around asynchronous file writes.
+- Choosing **No** in the close-with-unsaved-changes prompt now reliably discards changes and closes the Electron window. The renderer uses acknowledged IPC and the main process destroys the already-approved window rather than re-entering the intercepted close loop.
+
+# Systemika 2026.09.10 — Clear Outputs icon revision 18
+
+- Replaced the Clear Outputs toolbar artwork with the user-supplied eraser icon.
+- Changed the tooltip to **Clear Outputs** and assigned **Ctrl+0** (Command+0 on macOS) to the Clear Outputs action.
+- Removed the Ctrl+0 shortcut label from Reset Zoom to avoid a shortcut conflict; Reset Zoom remains available from the Zoom menu.
+
+# Systemika 2026.09.10 — Interface revision 17
+
+- Simulation Settings now opens with a **single click** on the simulation progress/status control. The previous double-click-only behavior has been removed.
+- The existing Simulation Settings menu/button remains a normal single-click action.
+
+# Systemika 2026.09.10 — Branding revision 16
+
+- Replaced the legacy StochSD application artwork with the supplied Systemika logo across Electron, Windows, Linux, macOS, browser favicons, About dialogs, and Multi-Simulation Analyser/PWA assets.
+- Renamed active icon assets from `stochsd.*` to `systemika.*` and updated packaging/build references accordingly.
+- Added `productName: "Systemika"` while retaining the lowercase npm package identifier `systemika`.
+- Electron now explicitly calls `app.setName("Systemika")`, preventing Linux/desktop shells from exposing the application name as lowercase `systemika`.
+
+# Systemika 2026.09.10 — Canvas navigation revision 15
+
+- Added **Shift+Page Up** / **Shift+Page Down** horizontal canvas scrolling by approximately one visible page.
+- Added **Ctrl+Home** (Command+Home on macOS) to return the model workspace to the top-left corner by resetting both horizontal and vertical scroll positions.
+- Canvas zoom now uses the current selected model entity (or the centroid of multiple selected entities) as the zoom focal point. Ctrl+wheel remains pointer-centred when nothing is selected.
+- Toolbar/menu zoom and Ctrl+/Command +/-/0 use the same selection-centred behavior.
+
+# Systemika 2026.09.10 — XY, table paint, and wheel zoom revision 14
+
+- Restored the original explicit single-series jqPlot configuration when exactly one XY run is selected, while retaining the multi-run comparison path for two or more runs.
+- Multi-run table headers now use one sticky `thead` paint layer instead of two independently sticky rows, eliminating separator offsets and stray border fragments while scrolling.
+- Added Ctrl + mouse-wheel/trackpad scrolling to zoom the model canvas around the pointer. Ordinary wheel scrolling remains unchanged when Ctrl is not held.
+
+# Systemika 2026.09.10 — XY, Ghost search, and table header revision 13
+
+- Fixed XY Plot with a single selected run. XY rendering now falls back to the run's actual rows if Plot Period/time-metadata filtering yields no points, filters invalid numeric points, and makes an isolated single point visible even when markers are otherwise disabled.
+- Added a live search box to the Ghost source chooser. The list filters by primitive name or type and shows the number of matching items.
+- Fixed multi-run Table sticky headers while scrolling. Variable-name and run-name header rows now use separate sticky offsets, and the rowspan Time header matches the combined two-row height so early time values are no longer obscured.
+
+# Systemika 2026.09.10 — Interaction and XY comparison revision 12
+
+- Replaced the Ghost tool's native prompt/error path with an in-app source chooser. With no preselected primitive, users place the Ghost first and then choose any ghostable Stock, Flow, Auxiliary, Constant, or Lookup from a list.
+- Routed ordinary main-editor and Multi-Simulation Analyser `alert()` calls through in-app jQuery UI dialogs to avoid non-responsive Linux browser/native alerts.
+- Replaced the analyser model-name prompt and Print page-count prompt with in-app input dialogs. Removed the run-manager's browser `confirm()` fallback.
+- Simulation Settings can now be opened during an active Advance run. Start Time, Length, DT, and Method remain locked, while Advance By remains editable.
+- Advance now uses stable one-time-unit internal checkpoints and computes each user Advance target from the current Advance By value, so changing Advance By affects the next click without restarting the active run.
+- XY Plot now supports multi-run comparison using the same Runs to compare checklist as Time Plot and Table. Each selected run contributes its own XY/scatter series and legend entry.
+- Run-selection rename/delete/auto-selection handling now treats XY Plot as a multi-run display.
+- Legacy synchronous model-scripting `Prompt()`/`Confirm()` functions remain unchanged because converting those APIs to asynchronous dialogs would change model-expression semantics.
+
+# Systemika 2026.09.10 — Interface revision 11
+
+- Added **Ctrl+3** for **Advance to End**.
+- Completed simulations now force the green progress indicator and displayed current time to the simulation end, including completion via Advance to End.
+- Removed the legacy Time Plot creation button from the toolbar. Existing legacy TimePlot primitives remain supported when loading older models.
+- Renamed the multi-run Compare Simulations Plot in the UI to **Time Plot** and reused the original Time Plot icon; shortcut **P** creates this multi-run Time Plot.
+- Added output shortcuts: **T** Table, **X** XY Plot, **N** Number Box, **H** Histogram.
+- Renamed/reordered modeling toolbar tools to: Stock (S), Flow (F), Link (L), Auxiliary (A), Constant (C), Lookup (K), Ghost (G). Internal legacy primitive types remain unchanged for model compatibility.
+- New Constant and Lookup primitives use `Constant` and `Lookup` as their default generated names.
+- Added regression coverage for toolbar order, shortcuts, legacy TimePlot compatibility, and completion progress.
+
+# Systemika 2026.09.10 — Run management revision 10
+
+- Removed the user-facing **Reset** toolbar control and its Ctrl+3 shortcut to simplify the Advance workflow.
+- Renamed **Advance to End / Finish** to **Advance to End**; the `>>|` icon and completion behavior are retained.
+- Fixed Advance auto-selection regression by creating the named in-memory live run before notifying run-selector UI. Newly started Advance runs therefore remain selected in plots and tables from the first step.
+- Plot HTML overlays now scale and reposition with canvas zoom, so axes, labels, legends, and plot series zoom together with the SVG plot border and the rest of the canvas.
+- Simulation Settings now labels the integration step **Time Step (DT)**.
+- New models default to **DT = 0.25**. Existing saved models retain their saved DT.
+- Added **Advance By**, a per-model integer setting >= 1 with default value 1 time unit. Advance uses this interval instead of DT to determine how far each button press runs the model.
+- Added regression coverage for the toolbar simplification, Advance auto-selection ordering, Advance By validation/defaults, and plot-content zoom scaling.
+
+# Systemika 2026.09.10 — Run management revision 9
+
+- Multi-run Select/Deselect control now uses the fixed label **Select / Deselect All** with stable width, preventing properties-dialog resizing.
+- Advance now snapshots all plot/table run selections before auto-selecting the stepped run.
+- Reset restores the exact pre-Advance selections and refreshes saved-run output instead of leaving ordinary plots with an empty current-run source.
+- Displays created during Advance remove only the discarded transient run on Reset while preserving any other selected saved runs.
+- Added regression coverage for selection snapshot/restore and stable run-toggle sizing.
+
+# Systemika 2026.09.10 — Run management revision 8
+
+- Linux overwrite confirmation now prefers Systemika's in-app Yes/No dialog; Electron native message-box confirmation is retained only as a fallback.
+- Added a **Select All / Deselect All** toggle to the shared multi-run selector used by Compare Plot and Table.
+- Advance live value editing now delegates safety validation to the simulation engine's paused `setValue()` API instead of requiring `isConstant=true`, fixing valid parameter edits in legacy/imported models.
+- Reset during Advance now discards only the unfinished current trajectory and refreshes remaining selected runs instead of clearing every plot/table.
+- If an Advance run was overwriting an existing saved label, Reset restores the prior saved package.
+- Deleted/missing runs are immediately removed from Compare Plot/Table selections, and run selectors refresh on run rename/duplicate/delete events.
+
+# Systemika 2026.09.09 — Run management revision 7
+
+- Added a **Clear outputs** toolbar button immediately left of Run. It clears the rendered contents of all plots and tables without deleting display objects or saved run files.
+- Added **Advance to End / Finish** immediately right of Reset with a `>>|` icon. It resumes the active Advance simulation to completion and refreshes all output devices at completion.
+- Reset now immediately discards the partial Advance trajectory and clears all plot/table output instead of redisplaying stale partial data.
+- Advance runs now use the same run preparation/overwrite path as normal runs and are persisted when they reach the end (including through Finish); Reset discards an unfinished Advance run.
+- Existing parameter/constant values can now be changed while Advance is paused. Changes are propagated through the simulation engine's supported paused-run `setValue` API and take effect in subsequent simulation progress.
+- Structural model changes remain guarded during an active Advance run because the engine compiles model topology/state at run start and cannot safely hot-recompile stocks, flows, links, or state-dependent equations without losing internal state.
+- Replaced the external Runs-folder Explorer/Finder workflow with an in-app **Manage Runs** dialog supporting Rename, Duplicate, Delete, and Close. Closing the dialog refreshes all plots and tables.
+- Added Electron IPC and package-layer operations for safe run rename, duplicate, and delete.
+
+# Systemika 2026.09.09 — Run management revision 6
+
+- Starting a new **Advance** run now automatically selects that run in the same way as an ordinary Run.
+- Existing Time Plot, XY Plot and Histogram displays switch to the stepped run label immediately; Compare Plot and Table append the stepped run to their selected run list.
+- Newly created plots/tables during a stepped run now default to the stepped run label rather than remaining on an older saved run.
+
+# Systemika 2026.09.09 — Run management revision 5
+
+- Multi-run Table layout is now variable-first, run-second. For example: `Population [Base]`, `Population [Run 1]`, `Infected [Base]`, `Infected [Run 1]`. The on-screen two-row header groups run columns beneath each variable, and CSV/TSV exports use the same ordering.
+- Paused **Advance** simulations no longer place a blocking HTML overlay over plots and tables. A model-edit shield now sits below the result-display layer, allowing users to scroll tables, inspect plots, open display properties, change run/variable display selections, and create result displays while the simulation is paused.
+- Model-edit anchors are disabled during Advance so model geometry cannot be changed around the edit shield.
+- State-changing toolbar tools, Run, Reset, simulation time settings, and unit-checking settings now request termination of the paused Advance simulation before proceeding.
+- Added regression coverage for variable-first table layout and Advance exploration/guard behavior.
+
+# Systemika 2026.09.09 — Run management revision 4
+
+- Newly completed runs are automatically selected in existing plots and tables before display refresh. Time Plot, XY Plot and Histogram switch to the new run; Compare Plot and Table preserve their current selections and append the new run.
+- Compare Plot and Table created after a completed run initialize their multi-run selection from that named run instead of relying on an unnamed live sentinel.
+- Multi-run Table display changed from vertically stacked run blocks to a side-by-side comparison layout: Time is shared, and each run gets its own variable column group.
+- When compared runs use different time grids, the table uses the union of time points and leaves unmatched cells blank rather than interpolating or misaligning rows.
+- Multi-run CSV/TSV exports now use explicit run-specific columns such as `Population [Base]` and `Population [Run 1]`.
+- Added regression tests for automatic new-run selection, side-by-side time alignment, and multi-run export layout.
+
+# Systemika 2026.09.09 — Run management revision 3
+
+- Simplified run lists: the live/current run is shown by its actual label (for example `Base`) and is deduplicated against the saved `.sysrun` entry. The user-facing `Current / latest (...)` item has been removed.
+- Removed the legacy Compare Plot generations/results management panel from the right side of Compare Plot properties.
+- Fixed **Advance** so every step snapshots partial simulation data into the central run store and refreshes plots and tables immediately. Partial stepping data is not written to disk.
+- Compare Plot continues to support any number of selected named runs.
+- Table properties now use the same multi-run checklist as Compare Plot. Selecting multiple runs adds a `Run` column and stacks the datasets for reporting; CSV/TSV export includes the `Run` column.
+- Added regression tests for named-run deduplication, legacy panel removal, Advance refresh, multi-run tables, and partial-run capture.
+
+# Systemika 2026.09.08 — Run management revision 2
+
+- Fixed Compare Plot created after a completed simulation: Current/latest now populates immediately instead of waiting for another run event.
+- Replaced nested-frame `window.confirm()` overwrite handling with an asynchronous Electron `dialog.showMessageBox`, eliminating the unresponsive Yes/No dialog path.
+- Compare Plot now supports selecting any number of run sources simultaneously, including Current/latest plus multiple saved `.sysrun` files.
+- Compare Plot stores its selected run list in `RunNames` and labels plotted series with the source run name.
+- Automatic time-axis bounds span all selected comparison runs, including runs with different simulation periods.
+- Added behavioral tests for multi-run generations and regression tests for post-run Compare Plot initialization and Electron overwrite confirmation.
+
+# Systemika 2026.09.08
+
+- Added persistent normal simulation runs in a model-local `Runs/` directory.
+- Added toolbar **Run name** (default `Base`) and **Open Runs folder** control.
+- Added compressed `.sysrun` packages containing `data.csv` and `metadata.json`.
+- Added pre-run overwrite confirmation and atomic replacement.
+- Added renderer `SimulationDataManager` and routed post-run plot/table getters through it.
+- Internal optimizer/parameter-estimation/sensitivity simulations are not persisted.
+- Corrected Electron iframe bridge resolution so run/file APIs can be obtained from the parent/top frame when preload is not injected into the editor iframe.
+- Corrected run persistence to use the established `electronAPI.runs` bridge used by the desktop model file workflow.
+- Added per-display saved-run selection to Time Plot, Compare Plot, XY Plot, Histogram and Table properties.
+- Added run-source Refresh/Open Folder controls and model-specific run caching.
+- Browser-mode launches now visibly report that persistent Runs storage is unavailable instead of silently behaving like persistence succeeded.
+
 # Changelog
 
 All notable changes to StochSD will be documented in this file.

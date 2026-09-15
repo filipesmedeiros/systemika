@@ -2,27 +2,27 @@ var preferencesTemplate = {
 	"promptTimeUnitDialogOnStart": {
 		default: true,
 		type: "boolean",
-		title: "Prompt TimeUnitDialog on Startup",
-		description: "Controls if the TimeUnitDialog is shown on startup."
+		title: "Ask for a time unit when starting a new model",
+		description: "Show the Time Unit dialog when a new model starts."
 	},
 	"forceTimeUnit": {
 		default: true,
 		type: "boolean",
-		title: "Force TimeUnit",
-		description: "Controls if a TimeUnit must be set in order to edit."
+		title: "Require a model time unit",
+		description: "Require a time unit before model editing begins."
 	},
 	"showFunctionHelper": {
 		default: false,
 		type: "boolean",
-		title: "Show Function Helper",
-		description: "Show help in DefinitionEditor depending on cursor position. (Experimental feature)",
+		title: "Show equation function helper",
+		description: "Show function arguments and notes while editing equations.",
 		image: "./graphics/showArgumentHelper.png",
 	},
 	"showConverterPlotPreview": {
 		default: true,
 		type: "boolean",
-		title: "Show Converter Plot Preview",
-		description: "Show Converter Plot Preview while editing converter values."
+		title: "Show Lookup plot preview",
+		description: "Show a plot preview while editing Lookup values."
 	}
 	// primitiveFontSize
 	// showArgumentHelper

@@ -9,12 +9,12 @@ const process = require('process');
 // raw bytes instead. See https://github.com/gulpjs/vinyl-fs#optionsencoding
 const RAW = { encoding: false };
 
-function getStochSDVersion() {
+function getSystemikaVersion() {
 	var fs = require("fs");
 	process.chdir(__dirname)
 	var content = fs.readFileSync('../OpenSystemDynamics/src/version.js', 'utf8');
 	eval(content);
-	return stochsd.version;
+	return systemika.version;
 }
 
 gulp.task('default' , function(done) {
@@ -23,11 +23,11 @@ gulp.task('default' , function(done) {
 	// over the web. The desktop build runs the code as-is, unbundled, which
 	// makes it easier to debug — and is what electron-builder packages.
 
-	const StochSDVersion = getStochSDVersion()
-	console.log("Building StochSD version ", StochSDVersion);
+	const SystemikaVersion = getSystemikaVersion()
+	console.log("Building Systemika Studio version ", SystemikaVersion);
 
 	process.chdir(__dirname +'/..');
-	buildForWeb("distribute/output/web/"+StochSDVersion+"/");
+	buildForWeb("distribute/output/web/"+SystemikaVersion+"/");
 	buildForDesktop("distribute/output/app/");
 	copyLicenses("distribute/output/");
 
@@ -95,10 +95,10 @@ function buildForWeb(destFolder) {
 	gulp.src('MultiSimulationAnalyser/multisimulationanalyser-serviceworker.js', RAW)
 	.pipe(gulp.dest(destFolder+'MultiSimulationAnalyser/', RAW));
 
-	gulp.src('MultiSimulationAnalyser/stochsd-128.png', RAW)
+	gulp.src('MultiSimulationAnalyser/systemika-128.png', RAW)
 	.pipe(gulp.dest(destFolder+'MultiSimulationAnalyser/', RAW));
 
-	gulp.src('MultiSimulationAnalyser/stochsd-256.png', RAW)
+	gulp.src('MultiSimulationAnalyser/systemika-256.png', RAW)
 	.pipe(gulp.dest(destFolder+'MultiSimulationAnalyser/', RAW));
 
 	// OpenSystemDynamics

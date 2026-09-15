@@ -453,16 +453,17 @@ imc_return_handlers["export_model_return"]=function(obj) {
     
     
     
-    var new_model_name=prompt("Enter name of model",suggest_name);
-    if(new_model_name==null) {
-        return;
-    }
-    doing_save=true;
-    model_name=append_file_extension(new_model_name,".imm");
-    model_data=obj.returnobj.xml_data;
-    export_txt(model_name,model_data);
-    localStorage.setItem("im_stocsd_last_model_name",model_name);
-    localStorage.setItem("im_stocsd_last_model_data",model_data);
+    xprompt("Enter name of model", suggest_name, function(new_model_name) {
+        if(new_model_name==null || String(new_model_name).trim()==="") {
+            return;
+        }
+        doing_save=true;
+        model_name=append_file_extension(new_model_name,".imm");
+        model_data=obj.returnobj.xml_data;
+        export_txt(model_name,model_data);
+        localStorage.setItem("im_stocsd_last_model_name",model_name);
+        localStorage.setItem("im_stocsd_last_model_data",model_data);
+    });
 }
 
 $(window).focus(function() {
