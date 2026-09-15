@@ -80,7 +80,11 @@ jobs:
         run: |
           TAG="${{ github.event.inputs.release_tag }}"
           if [ -z "$TAG" ]; then
-            VERSION="$(node distribute/get-stochsd-version.js)"
+            VERSION="$(node -e "
+              const fs = require('fs');
+              eval(fs.readFileSync('OpenSystemDynamics/src/version.js', 'utf8'));
+              console.log(systemika.version);
+            ")"
             TAG="electron-${VERSION}-${{ github.run_number }}"
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
