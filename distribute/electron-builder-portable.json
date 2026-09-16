@@ -16,5 +16,7 @@
     ],
     "icon": "../app-icons/systemika.ico",
     "artifactName": "Systemika-Studio-Portable-${version}-${arch}.${ext}"
-  }
+  },
+  "npmRebuild": false,
+  "electronVersion": "44.3.0"
 }

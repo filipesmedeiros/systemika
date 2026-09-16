@@ -8,6 +8,6 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 if [ ! -x node_modules/.bin/electron ]; then
   echo "Installing the Electron runtime for Systemika..."
-  npm install
+  npm install --no-audit --no-fund
 fi
 npm run electron

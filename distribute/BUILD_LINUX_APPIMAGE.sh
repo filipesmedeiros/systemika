@@ -14,9 +14,14 @@ fi
 printf 'Using Node.js: %s\n' "$(node --version)"
 printf 'Using npm:     %s\n\n' "$(npm --version)"
 
+if ! node -e 'const [M,m]=process.versions.node.split(".").map(Number); process.exit(M > 22 || (M === 22 && m >= 12) ? 0 : 1)'; then
+  echo 'Systemika installer builds require Node.js 22.12 or newer. Install a current Node.js LTS release and try again.' >&2
+  exit 1
+fi
+
 cd "$DIST"
 echo 'Installing packaging dependencies...'
-npm install
+npm install --no-audit --no-fund
 
 echo 'Building Systemika AppImage...'
 npm run dist:linux

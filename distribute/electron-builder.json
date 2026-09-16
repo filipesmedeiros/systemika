@@ -43,5 +43,10 @@
     "uninstallDisplayName": "Systemika Studio",
     "deleteAppDataOnUninstall": false,
     "runAfterFinish": true
+  },
+  "npmRebuild": false,
+  "electronVersion": "44.3.0",
+  "toolsets": {
+    "appimage": "1.0.3"
   }
 }
