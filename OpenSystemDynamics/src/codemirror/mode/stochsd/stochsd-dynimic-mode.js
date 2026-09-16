@@ -1,9 +1,12 @@
 CodeMirror.defineMode("stochsd-dynamic-mode", () => {
 
-  function getColorFromPrimitive(primitiveName) {
+  function getPrimitiveByName(primitiveName) {
     const primitives = findName(primitiveName)
-    const primitive = Array.isArray(primitives) ? primitives.find(p => !isPrimitiveGhost(p)) : primitives
-    return primitive?.getAttribute("Color")
+    return Array.isArray(primitives) ? primitives.find(p => !isPrimitiveGhost(p)) : primitives
+  }
+
+  function getColorFromPrimitive(primitiveName) {
+    return getPrimitiveByName(primitiveName)?.getAttribute("Color")
   }
 
 
@@ -20,6 +23,14 @@ CodeMirror.defineMode("stochsd-dynamic-mode", () => {
       return "comment";
     } else if (stream.match(/[\w]+(?=\()/)) {
       return "functioncall";
+    } else if (stream.match(/[A-Za-z_][A-Za-z_0-9]*/)) {
+      const primitiveName = stream.current();
+      const primitive = getPrimitiveByName(primitiveName);
+      if (primitive) {
+        const color = primitive.getAttribute("Color");
+        return `primitive ${color || ""}`.trim();
+      }
+      return null;
     }
     stream.next();
   }

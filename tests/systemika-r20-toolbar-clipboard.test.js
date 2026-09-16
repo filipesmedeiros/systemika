@@ -9,13 +9,13 @@ const editor = fs.readFileSync(path.join(root, 'OpenSystemDynamics', 'src', 'edi
 const css = fs.readFileSync(path.join(root, 'OpenSystemDynamics', 'src', 'style', 'editor.css'), 'utf8');
 
 test('creation tools use one left column while editing, output, and run tools stay on top', () => {
-  assert.match(html, /class="tool-panel run-tool-panel"[\s\S]*id="btn_mouse"[\s\S]*id="btn_cut"[\s\S]*id="btn_numberbox"[\s\S]*id="runControllerArea"/);
+  assert.match(html, /class="tool-panel run-tool-panel"[\s\S]*id="btn_mouse"[\s\S]*id="btn_cut"[\s\S]*id="btn_table"[\s\S]*id="runControllerArea"/);
   assert.match(html, /class="workspace-row"[\s\S]*class="model-tool-panel"[\s\S]*id="btn_stock"[\s\S]*id="btn_rotatename"/);
   const topStart = html.indexOf('class="tool-panel run-tool-panel"');
   const workspaceStart = html.indexOf('class="workspace-row"');
   const top = html.slice(topStart, workspaceStart);
   const vertical = html.slice(workspaceStart);
-  for (const id of ['btn_mouse','btn_delete','btn_undo','btn_redo','btn_cut','btn_copy','btn_paste','btn_colour','btn_numberbox','btn_table','btn_compareplot','btn_xyplot']) {
+  for (const id of ['btn_mouse','btn_delete','btn_undo','btn_redo','btn_cut','btn_copy','btn_paste','btn_colour','btn_table','btn_compareplot','btn_xyplot']) {
     assert.ok(top.includes(`id="${id}"`), `${id} should be in the top toolbar`);
     assert.ok(!vertical.includes(`id="${id}"`), `${id} should not remain in the vertical toolbar`);
   }
@@ -38,9 +38,13 @@ test('Colour is a toolbar palette rather than a top menu', () => {
 
 test('copy cut paste are exposed in the toolbar and keyboard shortcuts are active', () => {
   assert.match(html, /id="btn_cut"[\s\S]*id="btn_copy"[\s\S]*id="btn_paste"/);
-  assert.match(editor, /event\.key\.toLowerCase\(\) == "c"[\s\S]*Clipboard\.copy\(\)/);
-  assert.match(editor, /event\.key\.toLowerCase\(\) == "x"[\s\S]*Clipboard\.cut\(\)/);
-  assert.match(editor, /event\.key\.toLowerCase\(\) == "v"[\s\S]*Clipboard\.paste\(\)/);
+  assert.match(editor, /event\.key\.toLowerCase\(\) == "c"[\s\S]{0,220}copySelectionWithFigureImage\(\)/);
+  assert.match(editor, /event\.key\.toLowerCase\(\) == "x"[\s\S]{0,220}cutSelectionWithFigureImage\(\)/);
+  assert.match(editor, /event\.key\.toLowerCase\(\) == "v"[\s\S]{0,220}Clipboard\.paste\(\)/);
+  assert.match(editor, /\$\("#btn_copy"\)\.click\(function \(\) \{ void copySelectionWithFigureImage\(\); \}\);/);
+  assert.match(editor, /\$\("#btn_cut"\)\.click\(function \(\) \{ void cutSelectionWithFigureImage\(\); \}\);/);
+  assert.match(editor, /async function copySelectionWithFigureImage\(\)[\s\S]*Clipboard\.copy\(\)[\s\S]*copyGraphVisualToClipboard/);
+  assert.match(editor, /async function cutSelectionWithFigureImage\(\)[\s\S]*copyGraphVisualToClipboard[\s\S]*Clipboard\.cut\(\)/);
   assert.match(editor, /candidate = `\$\{base\} \$\{counter\}`/);
   assert.match(editor, /remapFormulaAttributes/);
   assert.match(editor, /remapIdAttributes/);

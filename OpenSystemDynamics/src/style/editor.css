@@ -20,7 +20,7 @@
 
 body {
     font-family: Arial,Helvetica,sans-serif;
-    /* Force print to show all color, this shows gray color in table at Print Equations */
+    /* Force print to show all color, this shows gray color in printed documentation tables */
     /* -webkit-print-color-adjust: exact; */
     color: var(--color-text-primary);
     margin: 0;
@@ -474,7 +474,7 @@ table {
     font-size: 25px; 
     font-weight: bold;
     width: 100%; 
-    text-align: center;
+    text-align: right;
 }
 
 /* Sticky table start here (used in TableVisual) */
@@ -853,3 +853,277 @@ b[data-arg]::before {
     position: absolute;
     width: 0;
 }
+/* Systemika paged Figure navigation */
+.systemika-paged-plot {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.systemika-plot-page-nav {
+    height: 26px;
+    min-height: 26px;
+    width: calc(100% - 10px);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    padding-right: 4px;
+    box-sizing: border-box;
+    font-size: 11px;
+    line-height: 1;
+    user-select: none;
+}
+.systemika-plot-page-nav button {
+    min-width: 24px;
+    height: 22px;
+    padding: 0 6px;
+    line-height: 18px;
+}
+.systemika-plot-page-nav .plot-page-add,
+.systemika-plot-page-nav .plot-page-delete {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 18px;
+    font-weight: normal;
+    line-height: 18px;
+    padding: 0 6px;
+}
+.systemika-plot-page-nav .plot-page-delete:disabled {
+    cursor: default;
+    color: #aaa;
+    opacity: 0.42;
+}
+.table-settings-button {
+    position: absolute;
+    right: 5px;
+    bottom: 5px;
+    z-index: 20;
+    min-width: 26px;
+    height: 24px;
+    padding: 0 5px;
+    font-size: 15px;
+    line-height: 20px;
+    opacity: 0.88;
+}
+.systemika-plot-page-nav .plot-page-label {
+    min-width: 0;
+    max-width: calc(100% - 96px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: center;
+}
+
+/* Systemika docked output workspace -------------------------------------------------
+   The modeling canvas remains on the left; plots/tables/equations live in a
+   resizable output panel on the right. */
+.systemika-output-splitter {
+    flex: 0 0 6px;
+    cursor: col-resize;
+    background: var(--color-border);
+    opacity: 0.45;
+    z-index: 12;
+}
+.systemika-output-splitter:hover,
+.systemika-output-splitter.systemika-resizing {
+    opacity: 0.9;
+}
+.systemika-output-panel {
+    flex: 0 0 25%;
+    min-width: 300px;
+    max-width: 70vw;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid var(--color-border);
+    background: var(--color-background-light);
+    overflow: hidden;
+    z-index: 11;
+}
+.systemika-output-header {
+    flex: 0 0 auto;
+    min-height: 34px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-background-light);
+    box-sizing: border-box;
+}
+.systemika-output-header strong {
+    white-space: nowrap;
+    margin-right: 2px;
+}
+.systemika-output-detach-button {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+}
+.systemika-output-detach-button img {
+    width: 16px;
+    height: 16px;
+    display: block;
+}
+.systemika-output-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: white;
+}
+.systemika-output-view {
+    flex: 0 0 40%;
+    min-height: 100px;
+    position: relative;
+    overflow: auto;
+    background: white;
+}
+.systemika-output-horizontal-splitter {
+    flex: 0 0 6px;
+    cursor: row-resize;
+    background: var(--color-border);
+    opacity: 0.45;
+}
+.systemika-output-horizontal-splitter:hover,
+.systemika-output-horizontal-splitter.systemika-resizing {
+    opacity: 0.9;
+}
+.systemika-output-settings {
+    flex: 1 1 60%;
+    min-height: 100px;
+    overflow: auto;
+    padding: 6px;
+    box-sizing: border-box;
+    background: white;
+}
+.systemika-output-settings .table,
+.systemika-output-settings .table-row {
+    display: block;
+    width: 100%;
+}
+.systemika-output-settings .table-cell {
+    display: inline-block;
+    vertical-align: top;
+    width: min(100%, 360px);
+    box-sizing: border-box;
+}
+.systemika-output-settings .systemika-dock-settings-footer {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    padding: 6px 0 2px;
+    background: rgba(255,255,255,0.96);
+    border-top: 1px solid var(--color-border);
+}
+.systemika-output-holding {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    overflow: hidden !important;
+    pointer-events: none !important;
+    opacity: 0 !important;
+}
+.systemika-output-panel.systemika-output-external {
+    flex: 1 1 auto;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    min-width: 0;
+    min-height: 0;
+    border: 0;
+}
+.systemika-output-panel.systemika-output-equations-mode .systemika-output-horizontal-splitter,
+.systemika-output-panel.systemika-output-equations-mode .systemika-output-settings {
+    display: none;
+}
+.systemika-output-panel.systemika-output-equations-mode .systemika-output-view {
+    flex: 1 1 auto !important;
+    height: auto !important;
+    min-height: 0;
+    padding: 8px;
+    box-sizing: border-box;
+}
+.systemika-output-view > .canvas-scaled-html-overlay.systemika-docked-plot {
+    position: relative !important;
+    left: 0 !important;
+    top: 0 !important;
+    transform: none !important;
+    width: 100% !important;
+    height: 100% !important;
+    display: block !important;
+    overflow: hidden !important;
+    background: white !important;
+}
+.systemika-output-view .systemika-docked-table {
+    min-width: 100%;
+    min-height: 100%;
+    overflow: auto;
+    background: white;
+}
+.systemika-table-selection-summary {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--color-border);
+    background: rgba(255,255,255,0.96);
+    font-size: 0.92em;
+}
+
+/* Keep run and entity selectors compact even for large models/run libraries. */
+.systemika-compare-run-options,
+.systemika-compare-run-order {
+    box-sizing: border-box;
+    height: 78px !important; /* approximately three run rows */
+    min-height: 78px !important;
+    max-height: 78px !important;
+    overflow-y: auto !important;
+}
+.included-list-div,
+.excluded-list-div {
+    box-sizing: border-box;
+    height: 145px !important; /* approximately five variable rows */
+    min-height: 145px !important;
+    max-height: 145px !important;
+    overflow-y: auto !important;
+}
+
+/* Compact equation documentation layout for the 25% output pane. */
+.systemika-documentation-preview { min-width: 0; }
+.equation-document-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    align-items: baseline;
+    padding: 6px 8px;
+    margin-bottom: 6px;
+    border: 1px solid var(--color-border);
+    background: var(--color-background-light);
+    font-size: 0.92em;
+}
+.equation-document-summary .equation-spec { white-space: nowrap; }
+.equation-entity-count { margin: 6px 0; font-weight: 600; }
+.equation-document-table {
+    width: 100%;
+    table-layout: fixed;
+    font-size: 0.9em;
+}
+.equation-document-table th,
+.equation-document-table td {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+.equation-document-table th:nth-child(1) { width: 5%; }
+.equation-document-table th:nth-child(2) { width: 10%; }
+.equation-document-table th:nth-child(3) { width: 14%; }
+.equation-document-table th:nth-child(4) { width: 31%; }
+.equation-document-table th:nth-child(5) { width: 16%; }
+.equation-document-table th:nth-child(6) { width: 10%; }
+.equation-document-table th:nth-child(7) { width: 14%; }

@@ -22,9 +22,15 @@ Unit checking is deliberately separate from numerical simulation. `OpenSystemDyn
 The numerical engine remains version **0.8.5** in this milestone because its integration/evaluation semantics are unchanged. The full application regression suite after adding the unit checker is **204/204 passing**.
 
 
+## Signed Flow semantics in 1.0.0
+
+Systemika treats Flow rates as signed quantities. The numerical engine applies the equation result exactly as evaluated: positive and negative Flow values are both valid, and no lower or upper bound is imposed by the software. For a stock-to-stock Flow, a negative value reverses the effective transfer direction while preserving the usual stock-balance equations.
+
+The legacy `.ssd` attribute `OnlyPositive` is retained only for file-format compatibility. New Systemika Flows store it as `false`; loaded files that contain `OnlyPositive="true"` are normalized to `false`, and the native engine does not use that attribute to clamp results. Stock `NonNegative` behavior is separate and remains supported.
+
 ## Multiline equations
 
-The native tokenizer treats line breaks as ordinary whitespace. The Equation Editor therefore supports multiline formulas directly; this is especially useful for formatting nested `IfThenElse(...)` expressions. Enter inserts a line break, while Ctrl+Enter (Windows/Linux) or Cmd+Enter (macOS) applies the equation.
+The native tokenizer treats line breaks as ordinary whitespace. The Equation Editor therefore supports multiline formulas directly; this is especially useful for formatting nested `IfThenElse(...)` expressions. No continuation/escape character is required. Enter inserts a line break, Tab moves to the next properties field, and Ctrl+Enter (Windows/Linux) or Cmd+Enter (macOS) applies the equation.
 
 ## Programming and statistical functions in 0.8.x
 
@@ -95,7 +101,7 @@ Full automated suite after this milestone: **185/185 passing**.
 ## Implemented in 0.3.0
 
 - Stock, flow, auxiliary/constant, and lookup primitives
-- Model entity references such as `[Population]`
+- Bare model-entity references such as `Population` (legacy `[Population]` remains accepted on import)
 - Euler (RK1) integration
 - Classical fourth-order Runge-Kutta (RK4) integration
 - Re-evaluation of flows and auxiliaries at every RK4 intermediate stage
@@ -112,7 +118,7 @@ Full automated suite after this milestone: **185/185 passing**.
 - Stateful programming functions: `Smooth`, `Delay`; history-based fixed lag: `Lag`
 - Statistical functions: `RandomUniform`, `RandomNormal`, `RandomTriangular`, `RandomGamma`, `RandomBeta`
 - Reproducible per-run random seeds with RK4-stable stochastic call semantics
-- Existing stock/flow non-negative flags (basic clamping semantics)
+- Stock non-negative flag support. Flow rates are always signed and unrestricted; negative Flow values are never clamped and reverse the effective transfer direction.
 - Result compatibility helpers: `times`, `periods`, `value(primitive)`, `resume()`, `terminate()`, `completed()`, `setValue()`
 - Pause/resume controller for Run/Advance simulations, with browser callbacks deferred between chunks so the UI remains responsive
 - Interactive parameter override for state-independent auxiliary/constant and flow equations
@@ -156,7 +162,7 @@ const results = SystemikaEngine.simulate({
     { id: "s", name: "Population", initial: "100" }
   ],
   flows: [
-    { id: "f", name: "Growth", equation: "0.1 * [Population]", targetId: "s" }
+    { id: "f", name: "Growth", equation: "0.1 * Population", targetId: "s" }
   ]
 });
 ```

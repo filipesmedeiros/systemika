@@ -58,7 +58,7 @@ test('Compare Plot created after a run refreshes live data, including partial Ad
   assert.match(body, /setTimeout\(\(\) => this\.refreshRunSources\(\), 0\)/);
   assert.doesNotMatch(body, /!RunResults\.simulationDone \|\|/);
   assert.match(body, /!RunResults\.results \|\| !RunResults\.results\.length/);
-  assert.match(body, /this\.gens\.append\(this\.fetchedIds, results, lineOptions, label, true\)/);
+  assert.match(body, /this\.gens\.append\(this\.fetchedIds, results, this\.primitive, label, true\)/);
 });
 
 test('run selectors show the actual current run name and do not expose a Current/latest label', () => {

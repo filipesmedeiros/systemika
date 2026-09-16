@@ -8,7 +8,7 @@ class DefinitionError {
         this.messageTable = {
             "1": (defErr) => "Empty Definition",
             "2": (defErr) => `Unknown reference ${defErr["unknownRef"]}`,
-            "3": (defErr) => `Unused link from [${getName(findID(defErr["unusedId"]))}], or bracket pair [...] missing`,
+            "3": (defErr) => `Unused link from ${getName(findID(defErr["unusedId"]))}`,
             "4": (defErr) => `No ingoing link`, // only for converter
             "5": (defErr) => `More than one ingoing link`, // only for converter 
             "6": (defErr) => `Unmatched ${defErr["openBracket"]}`, // opening bracket unmatched
@@ -27,39 +27,32 @@ class DefinitionError {
                 if (defString === "") return { "id": 1 };
             },
             (prim, defString) => {
-                // check brackets 
-                const lines = defString.split("\n");
-                let posCounter = 0;
-                for(let i in lines) {
-                    let line = lines[i];
-                    let defErr = checkBracketErrors(line);
-                    if (this.isDefErr(defErr)) {
-                        if ("openPos"  in defErr) defErr["openPos"]["line"]  = Number(i)+1;
-                        if ("closePos" in defErr) defErr["closePos"]["line"] = Number(i)+1;
-                        return defErr;
-                    }
-                    posCounter += line.length+1;
-                }
+                // Check matching brackets across the complete definition. A function
+                // may legitimately open on one line and close on another.
+                return checkBracketErrors(defString);
             },
             (prim, defString) => {
                 // check links  
                 let primType = prim.value.nodeName;
 	            let linkedIds = findLinkedInPrimitives(prim.id).map(getID);
 	            if (primType === "Stock" || primType === "Variable" || primType === "Flow") {
-                    // 2. Unknown reference
-                    let definitionRefs = defString.match(/[^[]+(?=\])/g);
-                    definitionRefs = definitionRefs === null ? [] : definitionRefs;
+                    // 2. Unknown reference / 3. Unused link. The native parser
+                    // accepts both Systemika bare identifiers (Population) and legacy
+                    // bracketed references ([Population]). Function names are not
+                    // mistaken for model references.
+                    let definitionRefs = getDefinitionReferences(defString);
+                    if (definitionRefs === null) return; // syntax errors are reported by the engine
                     let linkedRefs = linkedIds.map(id => getName(findID(id)));
+                    let linkedLower = linkedRefs.map(ref => ref.toLowerCase());
                     for (let ref of definitionRefs) {
-                        if (linkedRefs.includes(ref) === false) {
+                        if (linkedLower.includes(String(ref).toLowerCase()) === false) {
                             return { "id": "2", "unknownRef": ref };
                         }
                     }
 
-                    // 3. Unused link 
                     for(let i = 0; i < linkedIds.length; i++) {
                         let ref = linkedRefs[i];
-                        if (definitionRefs.includes(ref) === false) {
+                        if (definitionRefs.some(item => String(item).toLowerCase() === ref.toLowerCase()) === false) {
                             return { "id": "3", "unusedId": linkedIds[i] };
                         }
                     }
@@ -147,61 +140,77 @@ function LineColToString(pos) {
  * checks for bracket errors and returns value error
  * Input should only be one row
  */
-function checkBracketErrors(string) {
-    //       index:       0    1    2 
-	let openBrackets = 	["(", "{", "["];
-	let closeBrackets = [")", "}", "]"];
-    let bracketStack = []; // {pos: pos in string, bracket: openbracket, index: 0..2} only contains open brackets
-    let stringSansComment = string.split("#")[0];
-	for (pos in stringSansComment) { 
-        let char = stringSansComment[pos];
-		if (openBrackets.includes(char)) {
-			let index = openBrackets.indexOf(char);
-			bracketStack.push({"pos": parseInt(pos), "bracket": openBrackets[index], "index": parseInt(index)});
-		} else if (closeBrackets.includes(char)) {
-			let index = closeBrackets.indexOf(char);
-			if (bracketStack.length === 0) {
-                // unmatched close bracket, e.g. Rand(()
-                let openChar = openBrackets[index];
-                let closePos = parseInt(pos);
-                let closeChar = char;
-				return {"id": "7", "openBracket": openChar, "closePos": {"col": closePos}, "closeBracket": closeChar };
-			}
-			if (openBrackets[index] === bracketStack[bracketStack.length-1].bracket) {
-				bracketStack.pop();
-			} else {
-				// unmatching open and close brackets, e.g. Rand(()]
-                let openPos = parseInt(bracketStack[bracketStack.length-1].pos);
-                let openChar = bracketStack[bracketStack.length-1].bracket;
-                let closePos = parseInt(pos);
-				let closeChar = char;
-                
-                let openCount = stringSansComment.split(openChar).length - stringSansComment.split(closeBrackets[openBrackets.indexOf(openChar)]).length;
-                let closeCount= stringSansComment.split(openBrackets[closeBrackets.indexOf(closeChar)]).length - stringSansComment.split(closeChar).length;
-                if (openCount !== 0) {
-                    // OpenType bracket: openNum =/= closeNum => unmatched open brackets
-                    // e.g. Sin(T()/two_pi]
-                    return {"id": "6", "openPos": {"col": openPos}, "openBracket": openChar, "closeBracket": closeBrackets[openBrackets.indexOf(openChar)] };
-                } else if (closeCount !== 0) {
-                    // CloseType bracket: openNum =/= closeNum => unmatched close brackets
-                    // e.g. Sin(T()/two_pi])
-                    return {"id": "7", "openBracket": openBrackets[closeBrackets.indexOf(closeChar)], "closePos": {"col": closePos}, "closeBracket": closeChar };
-                } else {
-                    // e.g. Sin(T([)/two_pi])
-                    return {"id": "8", "openPos": {"col": openPos}, "openBracket": openChar, "closePos": {"col": closePos}, "closeBracket": closeChar };
-                }
+function getDefinitionReferences(definition) {
+    try {
+        if (typeof SystemikaEngine !== "undefined" && SystemikaEngine.parseExpression && SystemikaEngine.collectReferences) {
+            return Array.from(SystemikaEngine.collectReferences(SystemikaEngine.parseExpression(definition)));
+        }
+    } catch (_error) {
+        return null;
+    }
+    const refs = [];
+    const add = value => {
+        value = String(value || "").trim();
+        if (value && !refs.some(item => item.toLowerCase() === value.toLowerCase())) refs.push(value);
+    };
+    let match;
+    const bracket = /\[([^\]]+)\]/g;
+    while ((match = bracket.exec(definition))) add(match[1]);
+    return refs;
+}
 
-			}
-		}
-	}
-	if ( bracketStack.length === 0 ) {
-		return "";
-	} else {
-		// unmatched open brackets, e.g. Rand(()
-        const topStack = bracketStack[bracketStack.length-1];
-        const openPos = parseInt(topStack.pos);
-        const openChar = topStack.bracket;
-        const closeChar = closeBrackets[topStack.index];
-		return { "id": "6", "openPos": {"col": openPos}, "openBracket": openChar, "closeBracket": closeChar };
-	}
+/**
+ * Checks matching (), {}, and legacy [] brackets across a complete multiline
+ * definition. Newlines are whitespace in Systemika expressions and therefore
+ * do not reset bracket matching.
+ */
+function checkBracketErrors(string) {
+    const openBrackets = ["(", "{", "["];
+    const closeBrackets = [")", "}", "]"];
+    const bracketStack = [];
+    const text = String(string == null ? "" : string);
+    let line = 1;
+    let col = 0;
+    let inComment = false;
+
+    for (let pos = 0; pos < text.length; pos++) {
+        const char = text[pos];
+        if (char === "\n") {
+            line++;
+            col = 0;
+            inComment = false;
+            continue;
+        }
+        col++;
+        if (inComment) continue;
+        if (char === "#") {
+            inComment = true;
+            continue;
+        }
+        if (openBrackets.includes(char)) {
+            const index = openBrackets.indexOf(char);
+            bracketStack.push({ bracket: char, index, pos: { line, col } });
+            continue;
+        }
+        if (!closeBrackets.includes(char)) continue;
+
+        const index = closeBrackets.indexOf(char);
+        if (!bracketStack.length) {
+            return { id: "7", openBracket: openBrackets[index], closeBracket: char, closePos: { line, col } };
+        }
+        const top = bracketStack[bracketStack.length - 1];
+        if (top.index !== index) {
+            return {
+                id: "8", openBracket: top.bracket, closeBracket: char,
+                openPos: top.pos, closePos: { line, col }
+            };
+        }
+        bracketStack.pop();
+    }
+
+    if (!bracketStack.length) return "";
+    const top = bracketStack[bracketStack.length - 1];
+    return {
+        id: "6", openBracket: top.bracket, closeBracket: closeBrackets[top.index], openPos: top.pos
+    };
 }

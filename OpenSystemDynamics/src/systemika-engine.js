@@ -53,6 +53,14 @@
     return String(value == null ? "" : value).trim().toLowerCase();
   }
 
+  function decodeStoredExpression(value) {
+    return String(value == null ? "" : value).replace(/\\n/g, "\n");
+  }
+
+  const RESERVED_IDENTIFIERS = new Set([
+    "pi", "e", "eps", "epsilon", "true", "false", "time", "t", "dt", "ts", "tl", "te"
+  ]);
+
   class Tokenizer {
     constructor(expression) {
       this.expression = String(expression == null ? "" : expression);
@@ -243,6 +251,7 @@
     out = out || new Set();
     if (!ast) return out;
     if (ast.type === "reference") out.add(ast.name);
+    if (ast.type === "identifier" && !RESERVED_IDENTIFIERS.has(normalizeKey(ast.name))) out.add(ast.name);
     if (ast.type === "unary") collectReferences(ast.value, out);
     if (ast.type === "binary") {
       collectReferences(ast.left, out);
@@ -456,7 +465,7 @@
         if (key === "false") return false;
         if (key === "time" || key === "t") return context.time;
         if (key === "dt") return context.dt;
-        throw new SystemikaEngineError(`Unknown identifier '${ast.name}'. Use [Model Entity Name] for model references.`);
+        return context.resolve(ast.name);
       }
       case "unary": {
         const value = evaluateAst(ast.value, context);
@@ -624,7 +633,6 @@
       } else if (type === "flow" || type === "variable") {
         item.equation = String(raw.equation == null || raw.equation === "" ? "0" : raw.equation);
         item.ast = parseExpression(item.equation);
-        item.nonNegative = type === "flow" ? Boolean(raw.nonNegative) : false;
         if (type === "flow") {
           item.sourceId = raw.sourceId == null ? null : String(raw.sourceId);
           item.targetId = raw.targetId == null ? null : String(raw.targetId);
@@ -673,7 +681,7 @@
       if (!item.ast) return;
       for (const refName of collectReferences(item.ast)) {
         if (!nameMap.has(normalizeKey(refName))) {
-          throw new SystemikaEngineError(`Model entity '${item.name}' refers to unknown model entity '[${refName}]'.`);
+          throw new SystemikaEngineError(`Model entity '${item.name}' refers to unknown model entity '${refName}'.`);
         }
       }
     });
@@ -806,7 +814,7 @@
 
     resolveReference(name, state, time, cache, stack, initializing, resolveInitial) {
       const item = this.model.nameMap.get(normalizeKey(name));
-      if (!item) throw new SystemikaEngineError(`Unknown model entity '[${name}]'.`);
+      if (!item) throw new SystemikaEngineError(`Unknown model entity '${name}'.`);
       if (item.type === "stock") {
         if (Object.prototype.hasOwnProperty.call(state, item.id)) return state[item.id];
         if (initializing && resolveInitial) return resolveInitial(item);
@@ -921,7 +929,6 @@
         const ast = this.overrides.get(item.id) || item.ast;
         value = this.evaluateAstFor(ast, state, time, cache, stack, initializing, resolveInitial);
         value = finiteNumber(value, `Equation of '${item.name}'`);
-        if (item.type === "flow" && item.nonNegative) value = Math.max(0, value);
       }
       stack.delete(item.id);
       cache.set(item.id, value);
@@ -1240,20 +1247,19 @@
       if (type === "Stock") {
         stocks.push({
           id: String(cell.id), name: itemName(cell),
-          initial: cell.getAttribute("InitialValue") || "0",
+          initial: decodeStoredExpression(cell.getAttribute("InitialValue") || "0"),
           nonNegative: String(cell.getAttribute("NonNegative")).toLowerCase() === "true"
         });
       } else if (type === "Flow") {
         flows.push({
           id: String(cell.id), name: itemName(cell),
-          equation: cell.getAttribute("FlowRate") || "0",
+          equation: decodeStoredExpression(cell.getAttribute("FlowRate") || "0"),
           sourceId: cell.source ? String(safeOrig(cell.source).id) : null,
-          targetId: cell.target ? String(safeOrig(cell.target).id) : null,
-          nonNegative: String(cell.getAttribute("OnlyPositive")).toLowerCase() === "true"
+          targetId: cell.target ? String(safeOrig(cell.target).id) : null
         });
       } else if (type === "Variable") {
         variables.push({
-          id: String(cell.id), name: itemName(cell), equation: cell.getAttribute("Equation") || "0"
+          id: String(cell.id), name: itemName(cell), equation: decodeStoredExpression(cell.getAttribute("Equation") || "0")
         });
       } else if (type === "Converter") {
         converters.push({

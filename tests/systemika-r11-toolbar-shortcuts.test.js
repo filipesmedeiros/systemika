@@ -41,13 +41,14 @@ test('modeling toolbar order and names match Systemika shortcuts', () => {
 test('single-key shortcuts map to modeling and output tools, with L opening a selected Link', () => {
   for (const pair of [
     ['s','stock'],['f','flow'],['a','variable'],['c','constant'],['k','converter'],['g','ghost'],
-    ['p','compareplot'],['t','table'],['x','xyplot'],['n','numberbox'],['h','histoplot']
+    ['p','compareplot'],['t','table'],['x','xyplot'],['h','histoplot']
   ]) {
     assert.match(editor, new RegExp(`${pair[0]}: "${pair[1]}"`));
   }
   assert.match(editor, /if \(key === "l"\)[\s\S]{0,500}selectedRoots\.length === 1 && selectedRoots\[0\]\.type === "link"[\s\S]{0,220}selectedRoots\[0\]\.doubleClick\(\)[\s\S]{0,220}ToolBox\.setTool\("link"\)/);
   assert.match(html, /data-title="Table \(T\)"/);
   assert.match(html, /data-title="XY Plot \(X\)"/);
-  assert.match(html, /data-title="Number Box \(N\)"/);
+  assert.doesNotMatch(editor, /n: "numberbox"/);
+  assert.doesNotMatch(html, /id="btn_numberbox"/);
   assert.match(html, /data-title="Histogram \(H\)"/);
 });

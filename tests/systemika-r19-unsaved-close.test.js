@@ -79,3 +79,47 @@ test('Discarding unsaved changes closes through an acknowledged IPC path', () =>
   assert.match(main, /if \(!mainWindow\.isDestroyed\(\)\) mainWindow\.destroy\(\);/);
   assert.doesNotMatch(preload, /confirmClose:\s*\(\) => ipcRenderer\.send\("window:confirm-close"\)/);
 });
+
+
+test('A clean loaded model is canonicalized so harmless UI activity does not mark it unsaved', () => {
+  const classSource = extractClass(editor, 'History');
+  const ui = { hidden: true };
+  const context = {
+    console,
+    checkBeforeClose() {},
+    createModelFileData: () => 'CANONICAL_MODEL_XML',
+    loadModelFromXml: () => {},
+    primitives: () => [1, 2, 3],
+    SystemikaModelDocument: class {
+      appendPrimitives() {}
+      getXmlString() { return 'CANONICAL_MODEL_XML'; }
+    },
+    window: { addEventListener() {}, removeEventListener() {} },
+    localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
+    $: () => ({
+      prop() { return this; },
+      addClass(name) { if (name === 'hidden') ui.hidden = true; return this; },
+      removeClass(name) { if (name === 'hidden') ui.hidden = false; return this; },
+    }),
+  };
+  vm.createContext(context);
+  vm.runInContext(`${classSource}\nHistory.init(); globalThis.__History = History;`, context);
+  const History = context.__History;
+
+  // The disk file is semantically identical but textually non-canonical.
+  History.forceCustomUndoState('ORIGINAL_FILE_XML');
+  assert.equal(History.normalizeCleanBaseline(), true);
+  assert.equal(History.savedState, 'CANONICAL_MODEL_XML');
+  assert.equal(History.getCurrentState(), 'CANONICAL_MODEL_XML');
+  assert.equal(History.unsavedChanges, false);
+
+  // What mouse-up used to do after a harmless selection/click.
+  History.storeUndoState();
+  assert.equal(History.unsavedChanges, false);
+  assert.equal(History.undoStates.length, 1);
+});
+
+test('Blank-canvas mouse interaction does not store an undo state', () => {
+  assert.match(editor, /let wasBlankCanvasInteraction = currentTool === MouseTool && mouse\.emptyClickDown;/);
+  assert.match(editor, /if \(!wasBlankCanvasInteraction\) History\.storeUndoState\(\);/);
+});

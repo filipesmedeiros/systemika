@@ -10,6 +10,6 @@ The finished installer is written to:
 
 `distribute\output\dist-electron\Systemika-Studio-Setup-1.0.0-x64.exe`
 
-Node.js is required only on the computer that builds the installer. Students and other users who install Systemika Studio from the resulting `.exe` do not need Node.js or npm.
+Node.js 22.12 or newer is required only on the computer that builds the installer. Students and other users who install Systemika Studio from the resulting `.exe` do not need Node.js or npm.
 
 If `winget` is unavailable, install Node.js LTS manually from the official Node.js website, then run `BUILD_WINDOWS_INSTALLER.bat` again.

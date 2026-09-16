@@ -5,7 +5,7 @@ terms of the Affero General Public License (http://www.gnu.org/licenses/agpl-3.0
 
 */
 
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, clipboard, ClipboardItem, nativeImage } = require("electron");
 const fs = require("fs/promises");
 const path = require("path");
 const systemikaRunStore = require("./systemika-run-package");
@@ -15,7 +15,7 @@ const systemikaRunStore = require("./systemika-run-package");
 app.setName("Systemika Studio");
 
 // Paths are relative to this file so the same code works both run from the
-// repo root in development ("electron .") and from the copy gulp assembles
+// repo root in development ("electron .") and from the copy the packaging build assembles
 // under distribute/output — both keep electron/ as a sibling of start.html
 // and app-icons/.
 const appRoot = path.join(__dirname, "..");
@@ -114,6 +114,26 @@ function createWindow() {
 	mainWindow.maximize();
 	mainWindow.setMenuBarVisibility(false);
 	mainWindow.setTitle(`Systemika ${app.getVersion()}`);
+	// The Output panel uses window.open() when detached. Electron maps that to a
+	// real BrowserWindow, so the detached panel can be moved to another monitor.
+	// Keep that popup independent of the main window rather than constraining it
+	// as an in-window overlay or modal child.
+	mainWindow.webContents.setWindowOpenHandler(({ frameName }) => {
+		if (frameName === "SystemikaOutputWindow") {
+			return {
+				action: "allow",
+				overrideBrowserWindowOptions: {
+					width: 760,
+					height: 760,
+					minWidth: 360,
+					minHeight: 300,
+					resizable: true,
+					parent: null,
+				}
+			};
+		}
+		return { action: "allow" };
+	});
 	mainWindow.loadFile(entryPoint);
 
 	mainWindow.webContents.on("did-finish-load", () => {
@@ -195,6 +215,28 @@ ipcMain.handle("file:read", async (event, filePath) => {
 
 ipcMain.handle("file:write", async (event, filePath, contents) => {
 	await fs.writeFile(filePath, contents, "utf8");
+});
+
+ipcMain.handle("file:write-base64", async (event, filePath, base64Contents) => {
+	await fs.writeFile(filePath, Buffer.from(String(base64Contents || ""), "base64"));
+});
+
+ipcMain.handle("clipboard:write-png", async (event, base64Contents) => {
+	const buffer = Buffer.from(String(base64Contents || ""), "base64");
+	const image = nativeImage.createFromBuffer(buffer);
+	if (image.isEmpty()) throw new Error("Unable to create a clipboard image from the rendered figure.");
+
+	// Electron 44 removed the legacy image-specific clipboard helper. The main
+	// process now uses the W3C-style clipboard.write()/ClipboardItem API.
+	// Re-encoding through nativeImage also validates that the renderer supplied
+	// a real PNG before anything is written to the operating-system clipboard.
+	const pngBuffer = image.toPNG();
+	await clipboard.write([
+		new ClipboardItem({
+			"image/png": new Blob([pngBuffer], { type: "image/png" }),
+		}),
+	]);
+	return true;
 });
 
 ipcMain.handle("shell:open-external", async (event, url) => {

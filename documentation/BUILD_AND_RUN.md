@@ -43,7 +43,7 @@ Use a current Chromium-based browser for full local project-folder and saved-run
 npm test
 ```
 
-Release 1.0.0 baseline: **233 tests passing** plus **17 permanent validation models**.
+Release 1.0.0 baseline: **259 tests passing** plus **19 permanent validation models**.
 
 ## Build student/public installers
 
@@ -85,4 +85,4 @@ npm run dist:mac
 npm run dist:linux
 ```
 
-The root-level platform builders and platform guides are the preferred release procedures.
+The root-level platform builders and platform guides are the preferred release procedures. The `distribute` project has one npm packaging dependency (`electron-builder` 26.16.1); its staging script uses only Node built-ins. See `BUILD_TOOLCHAIN_SECURITY.md` for the release-toolchain rationale.

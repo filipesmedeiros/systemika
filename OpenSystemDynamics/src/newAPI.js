@@ -249,17 +249,26 @@ function getLinkedPrimitives(primitive) {
 	replaces all instences of a variable name in a definition (FlowRate, InitialValue, Equation)
 
 	Example:
-	$ let definition = "0.5*[foo]*[somevariable]/(foo * [foo])"
+	$ let definition = "0.5*foo*somevariable/(foo * foo)"
 	$ let newDefinition = replaceName(definition, "foo", "bar")
-	$ newDefiition
-	> "0.5*[bar]*[somevariable]/(foo * [bar])"
+	$ newDefinition
+	> "0.5*bar*somevariable/(bar * bar)"
 
 */
 function replaceName(definition, oldName, newName) {
-	let newDefinition = definition;
-	let rex = new RegExp("\\[" + oldName + "]", "g");
-	newDefinition = definition.replace(rex, "[" + newName + "]");
-	return newDefinition;
+	let text = String(definition == null ? "" : definition);
+	let escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	let oldEscaped = escapeRegex(oldName);
+	// Preserve compatibility with legacy [Name] references while Systemika's
+	// canonical syntax uses bare identifiers. Comments are left untouched.
+	return text.split("\n").map(line => {
+		let hash = line.indexOf("#");
+		let code = hash === -1 ? line : line.slice(0, hash);
+		let comment = hash === -1 ? "" : line.slice(hash);
+		code = code.replace(new RegExp("\\[\\s*" + oldEscaped + "\\s*\\]", "g"), newName);
+		code = code.replace(new RegExp("\\b" + oldEscaped + "\\b", "g"), newName);
+		return code + comment;
+	}).join("\n");
 }
 
 /**
@@ -399,6 +408,47 @@ function getCSA(primitive, attribute) {
 
 
 const trackableTypes = ["Stock", "Flow", "Variable", "Converter"];
+
+const DEFAULT_PLOT_LINE_STYLE = Object.freeze({ pattern: [1], width: 2 });
+
+function normalizePlotLineStyle(style) {
+	let pattern = style && Array.isArray(style.pattern) && style.pattern.length ? style.pattern.map(Number).filter(Number.isFinite) : [1];
+	let width = style ? Number(style.width) : 2;
+	if (!pattern.length) pattern = [1];
+	if (!Number.isFinite(width) || width <= 0) width = 2;
+	return { pattern, width };
+}
+
+function getPlotLineStyles(plotPrimitive) {
+	let styles = {};
+	try {
+		let raw = plotPrimitive && plotPrimitive.getAttribute("LineStyles");
+		if (raw) {
+			let parsed = JSON.parse(raw);
+			if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) styles = parsed;
+		}
+	} catch (_error) { styles = {}; }
+	let normalized = {};
+	Object.keys(styles).forEach(id => { normalized[String(id)] = normalizePlotLineStyle(styles[id]); });
+	return normalized;
+}
+
+function getPlotLineStyle(plotPrimitive, id) {
+	let styles = getPlotLineStyles(plotPrimitive);
+	return styles[String(id)] || { pattern: DEFAULT_PLOT_LINE_STYLE.pattern.slice(), width: DEFAULT_PLOT_LINE_STYLE.width };
+}
+
+function setPlotLineStyles(plotPrimitive, styles) {
+	let normalized = {};
+	Object.keys(styles || {}).forEach(id => { normalized[String(id)] = normalizePlotLineStyle(styles[id]); });
+	plotPrimitive.setAttribute("LineStyles", JSON.stringify(normalized));
+}
+
+function setPlotLineStyle(plotPrimitive, id, style) {
+	let styles = getPlotLineStyles(plotPrimitive);
+	styles[String(id)] = normalizePlotLineStyle(style);
+	setPlotLineStyles(plotPrimitive, styles);
+}
 
 /**
  * 	Method: setIdsToDisplay

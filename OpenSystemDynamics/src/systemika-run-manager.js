@@ -321,8 +321,25 @@
 
     if (input) {
       input.value = input.value.trim() || 'Base';
-      // Prevent editor keyboard shortcuts from firing while users type a label.
-      input.addEventListener('keydown', (event) => event.stopPropagation());
+      // Typing a run label must never activate editor creation shortcuts.  Run
+      // commands are the intentional exception: Enter, Ctrl/Cmd+1 and
+      // Ctrl/Cmd+R start/pause the model even while this field has focus.
+      input.addEventListener('keydown', (event) => {
+        const key = String(event.key || '').toLowerCase();
+        const runShortcut = (event.ctrlKey || event.metaKey) && (key === '1' || key === 'r');
+        if (event.key === 'Enter' || runShortcut) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (typeof root.systemikaRunModel === 'function') {
+            root.systemikaRunModel();
+          } else {
+            const runButton = document.getElementById('btn_run');
+            if (runButton) runButton.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, which: 1 }));
+          }
+          return;
+        }
+        event.stopPropagation();
+      });
       input.addEventListener('keyup', (event) => event.stopPropagation());
       input.addEventListener('keypress', (event) => event.stopPropagation());
     }

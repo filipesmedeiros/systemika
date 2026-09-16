@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	showOpenDialog: (extension) => ipcRenderer.invoke("dialog:open", extension),
 	readFile: (filePath) => ipcRenderer.invoke("file:read", filePath),
 	writeFile: (filePath, contents) => ipcRenderer.invoke("file:write", filePath, contents),
+	writeBase64File: (filePath, base64Contents) => ipcRenderer.invoke("file:write-base64", filePath, base64Contents),
+	copyPngToClipboard: (base64Contents) => ipcRenderer.invoke("clipboard:write-png", base64Contents),
 	openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
 
 	// Persistent simulation-run storage is exposed through the same bridge as

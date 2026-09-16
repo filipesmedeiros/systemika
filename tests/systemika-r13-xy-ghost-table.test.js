@@ -40,7 +40,7 @@ test('single-run XY falls back to actual run rows when filtered rows are empty',
 
 test('XY makes an isolated single point visible even when markers are normally disabled', () => {
   const visual = between(editor, 'class XyPlotVisual extends PlotVisual', 'class LineVisual extends TwoPointer');
-  assert.match(visual, /if \(dataSerie\.length === 1 && !showMarker\) showMarker = true/);
+  assert.match(visual, /let showMarker = dataSerie\.length === 1/);
 });
 
 test('Ghost chooser contains a live search box and filters by name or type', () => {
@@ -63,6 +63,6 @@ test('multi-run table keeps the complete two-row header as one sticky painted bl
 test('single-run XY uses the original explicit single-series rendering configuration', () => {
   const visual = between(editor, 'class XyPlotVisual extends PlotVisual', 'class LineVisual extends TwoPointer');
   assert.match(visual, /this\.singleRunMode = runNames\.length === 1/);
-  assert.match(visual, /if \(this\.singleRunMode\) \{[\s\S]*settings\.color = "black"/);
-  assert.match(visual, /else \{[\s\S]*settings\.label = label/);
+  assert.match(visual, /if \(this\.singleRunMode\) settings\.color = "black"/);
+  assert.match(visual, /settings\.label = `\$\{showNumber \? `\$\{seriesNumber\}\. ` : ""\}\$\{label\}`/);
 });

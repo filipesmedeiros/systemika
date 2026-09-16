@@ -139,5 +139,19 @@ module.exports = [
         {id:'b',name:'Beta',equation:'RandomBeta(2, 5, 105)'}
       ] },
     expect: { id:'u', range:[0,1], stochastic:true }
+  }  ,
+  {
+    file: '18-negative-flow.ssd', title: 'Signed Negative Flow',
+    spec: { timeStart: 0, timeLength: 3, dt: 1, method: 'Euler',
+      stocks: [{id:'a',name:'A',initial:'0'},{id:'b',name:'B',initial:'10'}],
+      flows: [{id:'f',name:'Transfer',equation:'-2',sourceId:'a',targetId:'b',nonNegative:true}] },
+    expect: { id:'a', final:6, tolerance:1e-12, conservation:['a','b'], total:10 }
+  },
+  {
+    file: '19-bare-multiline-equation.ssd', title: 'Bare Multiline Equation',
+    spec: { timeStart: 0, timeLength: 60, dt: 20, method: 'Euler',
+      variables: [{id:'stage',name:'Stage',equation:'IfThenElse(T<20, 1,\nIfThenElse(T<40, 2,\nIfThenElse(T<60, 3, 4)))'}] },
+    expect: { id:'stage', final:4, tolerance:1e-12 }
   }
+
 ];

@@ -73,7 +73,7 @@ test('direct tool and keyboard paths cannot bypass Advance termination protectio
 
 
 test('simulation settings remain accessible during Advance so Advance By can change live', () => {
-  const events = sourceBetween('let openSimulationSettings = () => {', '$("#btn_equation_list").click');
+  const events = sourceBetween('let openSimulationSettings = () => {', '$("#btn_copy").click');
   assert.doesNotMatch(events, /requestAdvanceTermination/);
   assert.match(events, /simulationSettings\.show\(\)/);
   assert.match(events, /#btn_simulation_settings/);

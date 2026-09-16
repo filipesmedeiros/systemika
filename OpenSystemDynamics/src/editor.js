@@ -343,6 +343,26 @@ class History {
 		this.setUnsavedChanges(false);
 	}
 
+	// Files can contain harmless XML-formatting/order differences that disappear
+	// when Systemika serializes the loaded model.  If the active undo snapshot is
+	// exactly the snapshot that was loaded/saved, replace both with the canonical
+	// serialization of the model now in memory.  This prevents a selection click
+	// (or any other non-mutating UI action followed by storeUndoState()) from
+	// turning on Unsaved Changes merely because the XML text was normalized.
+	static normalizeCleanBaseline(canonicalState = null) {
+		if (this.savedState == null || this.getCurrentState() !== this.savedState) return false;
+		let state = canonicalState;
+		if (state == null && typeof createModelFileData === "function") state = createModelFileData();
+		if (state == null) return false;
+		if (this.undoIndex >= 0 && this.undoIndex < this.undoStates.length) {
+			this.undoStates[this.undoIndex] = state;
+		}
+		this.lastUndoState = state;
+		this.savedState = state;
+		this.setUnsavedChanges(false);
+		return true;
+	}
+
   static storeUndoState() {
 		// Create new XML for state
 		let modelDocumentWriter = new SystemikaModelDocument();
@@ -367,6 +387,7 @@ class History {
 				this.undoIndex = this.undoStates.length - 1;
 			}
 			this.updateUnsavedState(undoState);
+			if (window.SystemikaOutputDock) SystemikaOutputDock.refreshEquationsIfVisible();
 		}
 	}
 
@@ -495,14 +516,9 @@ class InfoBar {
 				lineWrapping: false
 			}
 		);
-		this.infoRestricted = $(".info-bar__definition-restricted");
 		this.infoDE = $(".info-bar__definition-error");
 		$(this.infoDefinitionElement).find(".CodeMirror").css("border", "none");
 		InfoBar.update()
-	}
-	static setRestricted(isRestricted, primName) {
-		// this.infoRestricted.html(isRestricted ? `<b>(${primName} ≥ 0)<b>` : "" );
-		this.infoRestricted.html(isRestricted ? `(Restricted)` : "");
 	}
 	static update() {
 		let selected_hash = get_selected_root_objects();
@@ -515,7 +531,6 @@ class InfoBar {
 			$(this.infoDefinitionElement).find(".CodeMirror").addClass("cm-comment")
 			this.cmInfoDef.setValue("Nothing selected")
 			this.infoDE.html("");
-			this.setRestricted(false);
 		} else if (selected_array.length == 1) {
 			$(this.infoDefinitionElement).find(".CodeMirror").removeClass("cm-comment")
 			let selected = selected_array[0];
@@ -562,7 +577,6 @@ class InfoBar {
 			$(this.infoDefinitionElement).find(".CodeMirror").removeClass("cm-comment")
 			this.cmInfoDef.setValue(`${selected_array.length} objects selected`);
 			this.infoDE.html("");
-			this.setRestricted(false);
 		}
 	}
 }
@@ -617,19 +631,17 @@ function getVisibleNeighborhoodIds(id) {
 }
 
 function makePrimitiveName(primitiveName) {
-	return "[" + primitiveName + "]";
+	// Systemika model-entity names are identifier-safe, so the canonical equation
+	// syntax uses bare names (Population, BirthRate) rather than Insight Maker's
+	// legacy [Population] reference notation. The engine still accepts brackets
+	// when opening older .ssd models.
+	return String(primitiveName == null ? "" : primitiveName);
 }
 
 function stripBrackets(primitiveName) {
-	let cutFrom = primitiveName.lastIndexOf("[") + 1;
-	let cutTo = primitiveName.indexOf("]");
-	if (cutFrom == -1) {
-		cutFrom = 0;
-	}
-	if (cutTo == -1) {
-		cutTo = primitiveName.length;
-	}
-	return primitiveName.slice(cutFrom, cutTo);
+	let value = String(primitiveName == null ? "" : primitiveName).trim();
+	if (value.startsWith("[") && value.endsWith("]")) return value.slice(1, -1);
+	return value;
 }
 
 function formatFunction(functionName) {
@@ -758,7 +770,7 @@ function hasSelectedChildren(parentId) {
  * @param {*} id
  * @param {"value" | "field"} field
  */
-function openPrimitiveDialog(id, field = "value") {
+function openPrimitiveDialog(id, field = "name") {
 	let primitive = findID(id)
 	if (getType(primitive) == "Ghost") {
 		// If we click on a ghost change id to point to source
@@ -1437,6 +1449,18 @@ class NumberboxVisual extends BasePrimitive {
 	}
 }
 
+function auxiliaryUsesDelayFunction(primitive) {
+	if (!primitive) return false;
+	let sourcePrimitive = primitive;
+	if (primitive.value && primitive.value.nodeName === "Ghost") {
+		sourcePrimitive = findID(primitive.getAttribute("Source"));
+	}
+	if (!sourcePrimitive || !sourcePrimitive.value || sourcePrimitive.value.nodeName !== "Variable") return false;
+	if (sourcePrimitive.getAttribute("isConstant") === "true") return false;
+	let definition = String(getValue(sourcePrimitive) || "");
+	return /\b(?:Smooth|Delay|Lag)\s*\(/i.test(definition);
+}
+
 class VariableVisual extends BasePrimitive {
 	constructor(id, type, pos, extras) {
 		super(id, type, pos, extras);
@@ -1460,12 +1484,22 @@ class VariableVisual extends BasePrimitive {
 	}
 
 	getImage() {
+		this.element = SVG.circle(0, 0, this.getRadius(), this.color, defaultFill, "element");
+		this.processingElement = SVG.fromString('<image href="graphics/processing.svg" x="-20" y="-20" width="40" height="40" class="processing-element" preserveAspectRatio="xMidYMid meet"></image>');
 		return [
-			SVG.circle(0, 0, this.getRadius(), this.color, defaultFill, "element"),
+			this.element,
+			this.processingElement,
 			SVG.text(0, 0, this.primitive.getAttribute("name"), "name_element", { "fill": this.color }),
 			SVG.circle(0, 0, this.getRadius() - 2, "none", this.color, "highlight"),
 			SVG.icons(defaultStroke, defaultFill, "icons")
 		];
+	}
+
+	update() {
+		super.update();
+		let showProcessing = auxiliaryUsesDelayFunction(this.primitive);
+		if (this.element) this.element.setAttribute("visibility", showProcessing ? "hidden" : "visible");
+		if (this.processingElement) this.processingElement.setAttribute("visibility", showProcessing ? "visible" : "hidden");
 	}
 
 	getLayer() {
@@ -1583,7 +1617,7 @@ class ConverterVisual extends BasePrimitive {
 		openPrimitiveDialog(this.id, "name")
 	}
 	doubleClick() {
-		openPrimitiveDialog(this.id, "value")
+		openPrimitiveDialog(this.id, "name")
 	}
 }
 
@@ -2433,6 +2467,374 @@ function buildSideBySideRunTable(runBlocks, variableCount) {
 		.map(entry => [entry.time].concat(entry.values));
 }
 
+
+// Docked output workspace -----------------------------------------------------------
+// Plot and Table primitives remain part of the .ssd model for backward
+// compatibility, but their presentation is owned by the right-hand Output panel
+// rather than consuming modeling-canvas space.
+const SystemikaOutputDock = {
+	visuals: new Map(),
+	activeVisual: null,
+	activeType: "equations",
+	initialized: false,
+	_detached: false,
+	_externalWindow: null,
+	_externalClosing: false,
+	_visualViewFlex: "0 0 40%",
+
+	isOutputVisual(visual) {
+		return Boolean(visual && ["table", "timeplot", "compareplot", "xyplot", "histoplot"].includes(String(visual.type || "").toLowerCase()));
+	},
+	labelForType(type) {
+		return ({ table: "Table", timeplot: "Time Plot", compareplot: "Time Plot", xyplot: "XY Plot", histoplot: "Histogram" })[String(type || "").toLowerCase()] || "Output";
+	},
+	labelForVisual(visual) {
+		if (!visual) return "Output";
+		let name = visual.primitive ? String(getName(visual.primitive) || "").trim() : "";
+		return name || this.labelForType(visual.type);
+	},
+	hostDocument() {
+		if (this._externalWindow && !this._externalWindow.closed) return this._externalWindow.document;
+		return document;
+	},
+	byId(id) {
+		let host = this.hostDocument();
+		return (host && host.getElementById(id)) || document.getElementById(id);
+	},
+	panel() { return this.byId("systemika-output-panel"); },
+	view() { return this.byId("systemika-output-view"); },
+	settings() { return this.byId("systemika-output-settings"); },
+	holding() { return this.byId("systemika-output-holding"); },
+
+	init() {
+		if (this.initialized) return;
+		this.initialized = true;
+		let splitter = document.getElementById("systemika-output-splitter");
+		let horizontal = document.getElementById("systemika-output-horizontal-splitter");
+		let panel = this.panel();
+		let view = this.view();
+		let settings = this.settings();
+		if (!panel || !view || !settings) return;
+
+		const startVerticalResize = (event) => {
+			if (this._detached) return;
+			event.preventDefault();
+			let startX = event.clientX;
+			let startWidth = panel.getBoundingClientRect().width;
+			splitter.classList.add("systemika-resizing");
+			let move = moveEvent => {
+				let width = Math.max(300, Math.min(window.innerWidth * 0.7, startWidth - (moveEvent.clientX - startX)));
+				panel.style.flexBasis = `${width}px`;
+				this.resizeActive();
+			};
+			let up = () => {
+				document.removeEventListener("mousemove", move);
+				document.removeEventListener("mouseup", up);
+				splitter.classList.remove("systemika-resizing");
+			};
+			document.addEventListener("mousemove", move);
+			document.addEventListener("mouseup", up);
+		};
+		if (splitter) splitter.addEventListener("mousedown", startVerticalResize);
+
+		if (horizontal) horizontal.addEventListener("mousedown", event => {
+			if (panel.classList.contains("systemika-output-equations-mode")) return;
+			event.preventDefault();
+			let startY = event.clientY;
+			let startHeight = view.getBoundingClientRect().height;
+			let body = this.byId("systemika-output-body");
+			let maxHeight = Math.max(180, body.getBoundingClientRect().height - 110);
+			horizontal.classList.add("systemika-resizing");
+			let move = moveEvent => {
+				let height = Math.max(100, Math.min(maxHeight, startHeight + moveEvent.clientY - startY));
+				this._visualViewFlex = `0 0 ${height}px`;
+				view.style.flex = this._visualViewFlex;
+				this.resizeActive();
+			};
+			let eventDocument = horizontal.ownerDocument || document;
+			let up = () => {
+				eventDocument.removeEventListener("mousemove", move);
+				eventDocument.removeEventListener("mouseup", up);
+				horizontal.classList.remove("systemika-resizing");
+			};
+			eventDocument.addEventListener("mousemove", move);
+			eventDocument.addEventListener("mouseup", up);
+		});
+
+		let detachButton = document.getElementById("systemika-output-detach");
+		if (detachButton) detachButton.addEventListener("click", () => this.toggleDetached());
+
+		if (typeof ResizeObserver !== "undefined") {
+			this._resizeObserver = new ResizeObserver(() => this.resizeActive());
+			this._resizeObserver.observe(view);
+			this._resizeObserver.observe(panel);
+		} else window.addEventListener("resize", () => this.resizeActive());
+		this.refreshSelector();
+		this.showEquations();
+	},
+
+	toggleDetached() {
+		if (this._detached) this.attachExternalWindow();
+		else this.detachToExternalWindow();
+	},
+
+	updateDetachButton() {
+		let button = this.byId("systemika-output-detach");
+		if (!button) return;
+		let label = button.querySelector("span");
+		if (label) label.textContent = this._detached ? "Attach" : "Detach";
+		button.title = this._detached ? "Attach output panel" : "Detach output panel";
+		button.setAttribute("aria-label", button.title);
+	},
+
+	detachToExternalWindow() {
+		let panel = this.panel();
+		if (!panel) return;
+		let popup = null;
+		try {
+			popup = window.open("about:blank", "SystemikaOutputWindow", "popup=yes,width=760,height=760,resizable=yes,scrollbars=no");
+		} catch (error) {
+			console.error(error);
+		}
+		if (!popup) {
+			xAlert("Systemika could not open the detached output window. Please allow pop-up windows for Systemika and try again.");
+			return;
+		}
+		this._externalWindow = popup;
+		this._detached = true;
+		let baseHref = htmlEscape(document.baseURI);
+		let styleLinks = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
+			.map(link => `<link rel="stylesheet" href="${htmlEscape(link.href)}">`).join("");
+		popup.document.open();
+		popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Systemika Output</title><base href="${baseHref}">${styleLinks}<style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:white;}#systemika-output-window-host{width:100%;height:100%;display:flex;}</style></head><body><div id="systemika-output-window-host"></div></body></html>`);
+		popup.document.close();
+		let host = popup.document.getElementById("systemika-output-window-host");
+		if (!host) {
+			this._externalWindow = null;
+			this._detached = false;
+			try { popup.close(); } catch (_) {}
+			return;
+		}
+		panel.classList.add("systemika-output-external");
+		host.appendChild(panel);
+		let splitter = document.getElementById("systemika-output-splitter");
+		if (splitter) splitter.style.display = "none";
+		this.updateDetachButton();
+		popup.document.title = `Systemika - ${this.byId("systemika-output-title") ? this.byId("systemika-output-title").textContent : "Output"}`;
+		popup.addEventListener("resize", () => this.resizeActive());
+		popup.addEventListener("beforeunload", () => {
+			if (!this._externalClosing && this._externalWindow === popup) this.attachExternalWindow(true);
+		});
+		setTimeout(() => { try { popup.focus(); } catch (_) {} this.resizeActive(); }, 30);
+	},
+
+	attachExternalWindow(fromWindowClose = false) {
+		let popup = this._externalWindow;
+		let panel = this.panel();
+		let row = document.querySelector(".workspace-row");
+		let splitter = document.getElementById("systemika-output-splitter");
+		if (panel && row && panel.ownerDocument !== document) row.appendChild(panel);
+		if (panel) panel.classList.remove("systemika-output-external");
+		if (splitter) splitter.style.display = "";
+		this._detached = false;
+		this._externalWindow = null;
+		this.updateDetachButton();
+		if (!fromWindowClose && popup && !popup.closed) {
+			this._externalClosing = true;
+			try { popup.close(); } catch (_) {}
+			this._externalClosing = false;
+		}
+		setTimeout(() => this.resizeActive(), 30);
+	},
+
+	hideCanvasVisual(visual) {
+		if (!visual) return;
+		if (visual.group) visual.group.style.display = "none";
+		if (visual.start_anchor && typeof visual.start_anchor.setVisible === "function") visual.start_anchor.setVisible(false);
+		if (visual.end_anchor && typeof visual.end_anchor.setVisible === "function") visual.end_anchor.setVisible(false);
+		if (visual.htmlElement) visual.htmlElement.style.display = "none";
+		if (visual.targetElement) {
+			$(visual.targetElement).off("mousedown dblclick contextmenu");
+			let holding = this.holding();
+			if (holding && visual.targetElement.parentNode !== holding) holding.appendChild(visual.targetElement);
+			visual.targetElement.style.display = "none";
+		}
+	},
+
+	registerVisual(visual) {
+		if (!this.isOutputVisual(visual)) return;
+		this.visuals.set(String(visual.id), visual);
+		this.hideCanvasVisual(visual);
+		this.refreshSelector();
+	},
+	unregisterVisual(visual) {
+		if (!visual) return;
+		let id = String(visual.id);
+		this.visuals.delete(id);
+		if (this.activeVisual === visual) {
+			this.activeVisual = null;
+			this.showEquations();
+		}
+		this.refreshSelector();
+	},
+
+	refreshSelector() {
+		// Output navigation is intentionally owned by toolbar buttons/shortcuts.
+	},
+
+	unmountActive() {
+		let visual = this.activeVisual;
+		if (!visual) return;
+		if (visual.dialog && typeof visual.dialog.unmountFromDock === "function") visual.dialog.unmountFromDock();
+		if (visual.targetElement) {
+			visual.targetElement.classList.remove("systemika-docked-plot");
+			let holding = this.holding();
+			if (holding) holding.appendChild(visual.targetElement);
+			visual.targetElement.style.display = "none";
+		}
+		if (visual.dockElement) visual.dockElement.remove();
+	},
+
+	showEquations() {
+		this.init();
+		let panel = this.panel(), view = this.view(), settings = this.settings();
+		if (!panel || !view) return;
+		// Plot/Table resizing writes an inline flex basis on the shared view.
+		// Preserve that split for output views, but remove it completely for
+		// Equations so the documentation always owns the full panel height.
+		if (this.activeVisual && view.style.flex) this._visualViewFlex = view.style.flex;
+		this.unmountActive();
+		this.activeVisual = null;
+		this.activeType = "equations";
+		view.style.removeProperty("flex");
+		view.style.removeProperty("height");
+		if (settings) {
+			settings.style.removeProperty("flex");
+			settings.style.removeProperty("height");
+			settings.innerHTML = "";
+		}
+		panel.classList.add("systemika-output-equations-mode");
+		this.byId("systemika-output-title").textContent = "Equations";
+		if (typeof equationList !== "undefined" && equationList) {
+			equationList._dockOriginalContent = equationList._dockOriginalContent || equationList.dialogContent;
+			equationList.dialogContent = view;
+			view.innerHTML = equationList.renderPanelHtml();
+			equationList.bindPanelEvents();
+		} else view.innerHTML = `<div style="padding:12px;">Model equations will appear here.</div>`;
+		this.refreshSelector();
+	},
+
+	activateVisual(visual) {
+		if (!visual || !this.isOutputVisual(visual)) return;
+		this.init();
+		if (!this.visuals.has(String(visual.id))) this.registerVisual(visual);
+		if (this.activeVisual !== visual) this.unmountActive();
+		this.activeVisual = visual;
+		this.activeType = String(visual.type || "").toLowerCase();
+		let panel = this.panel(), view = this.view(), settings = this.settings();
+		panel.classList.remove("systemika-output-equations-mode");
+		// Output views have their own split state. The default is 40% output /
+		// 60% settings; resizing this split never constrains Equations.
+		view.style.flex = this._visualViewFlex || "0 0 40%";
+		view.style.removeProperty("height");
+		settings.style.flex = "1 1 60%";
+		settings.style.removeProperty("height");
+		view.innerHTML = "";
+		settings.innerHTML = "";
+		this.byId("systemika-output-title").textContent = this.labelForType(visual.type);
+		if (visual instanceof PlotVisual) {
+			view.appendChild(visual.targetElement);
+			visual.targetElement.classList.add("systemika-docked-plot");
+			visual.targetElement.style.display = "block";
+		} else if (visual instanceof TableVisual) {
+			if (!visual.dockElement) {
+				visual.dockElement = document.createElement("div");
+				visual.dockElement.className = "systemika-docked-table";
+			}
+			view.appendChild(visual.dockElement);
+		}
+		if (visual.dialog && typeof visual.dialog.mountInDock === "function") visual.dialog.mountInDock(settings);
+		this.refreshSelector();
+		visual.render();
+		setTimeout(() => this.resizeActive(), 10);
+	},
+
+	resizeActive() {
+		let visual = this.activeVisual;
+		if (!visual) return;
+		if (visual instanceof PlotVisual && typeof visual.updateDockedGraphics === "function") visual.updateDockedGraphics();
+	},
+
+	outputsOfType(type) {
+		let normalized = String(type || "").toLowerCase();
+		return Array.from(this.visuals.values()).filter(visual => {
+			let candidate = String(visual.type || "").toLowerCase();
+			return findID(visual.id) && candidate === normalized;
+		});
+	},
+
+	openType(type) {
+		this.init();
+		let normalized = String(type || "").toLowerCase();
+		if (normalized === "equations") {
+			this.showEquations();
+			return null;
+		}
+		let existing = this.outputsOfType(normalized);
+		if (existing.length) {
+			let index = this.activeVisual ? existing.indexOf(this.activeVisual) : -1;
+			let visual = existing[(index + 1 + existing.length) % existing.length];
+			this.activateVisual(visual);
+			return visual;
+		}
+		return this.createOutput(normalized, true);
+	},
+
+	createOutput(type) {
+		let normalized = String(type || "").toLowerCase();
+		let meta = {
+			table: ["Table", TableVisual, "Table"],
+			timeplot: ["TimePlot", TimePlotVisual, "TimePlot"],
+			compareplot: ["ComparePlot", ComparePlotVisual, "TimePlot"],
+			xyplot: ["XyPlot", XyPlotVisual, "XYPlot"],
+			histoplot: ["HistoPlot", HistoPlotVisual, "Histogram"]
+		}[normalized];
+		if (!meta) return null;
+		let [nodeType, VisualClass, baseName] = meta;
+		let primitive = createConnector(findFreeName(baseName), nodeType, null, null);
+		setSourcePosition(primitive, [20, 20]);
+		setTargetPosition(primitive, [620, 420]);
+		let visual = new VisualClass(primitive.id, normalized, [20, 20], [620, 420]);
+		let selected = Object.values(get_selected_root_objects()).filter(Boolean)
+			.map(item => item.primitive).filter(Boolean)
+			.filter(item => ["Stock", "Flow", "Variable", "Converter"].includes(getType(item)))
+			.map(item => String(getID(item)));
+		if (normalized === "xyplot") selected = selected.slice(0, 2);
+		if (normalized === "histoplot") selected = selected.slice(0, 1);
+		if (selected.length) setDisplayIds(primitive, selected, normalized === "timeplot" ? selected.map(() => "L") : undefined);
+		visual.update();
+		visual.render();
+		this.registerVisual(visual);
+		this.activateVisual(visual);
+		History.storeUndoState();
+		return visual;
+	},
+
+	onModelSynced() {
+		// Drop stale visual references after load/Undo, re-register current outputs,
+		// and preserve the active output only if that primitive still exists.
+		for (let [id, visual] of Array.from(this.visuals.entries())) if (!findID(id) || connection_array[id] !== visual) this.visuals.delete(id);
+		for (let id in connection_array) if (this.isOutputVisual(connection_array[id])) this.registerVisual(connection_array[id]);
+		if (this.activeVisual && this.visuals.has(String(this.activeVisual.id))) this.activateVisual(this.visuals.get(String(this.activeVisual.id)));
+		else this.showEquations();
+	},
+
+	refreshEquationsIfVisible() {
+		if (this.activeType === "equations") this.showEquations();
+	}
+};
+if (typeof window !== "undefined") window.SystemikaOutputDock = SystemikaOutputDock;
+
 class TableVisual extends HtmlTwoPointer {
 	constructor(id, type, pos0, pos1) {
 		super(id, type, pos0, pos1);
@@ -2442,23 +2844,38 @@ class TableVisual extends HtmlTwoPointer {
 		RunResults.subscribeRun(id, this.runHandler);
 		this.data = new TableData();
 		initializeMultiRunSelection(this.primitive);
+		SystemikaOutputDock.registerVisual(this);
+	}
+	updateHTML(html) {
+		super.updateHTML(html);
+		if (this.dockElement) this.dockElement.innerHTML = html;
+	}
+	clean() {
+		SystemikaOutputDock.unregisterVisual(this);
+		if (this.dockElement) this.dockElement.remove();
+		super.clean();
 	}
 	removePlotReference(removeId) {
 		let result = removeDisplayId(this.primitive, removeId);
 		if (result) {
+			let decimals = getTableDecimals(this.primitive);
+			delete decimals[String(removeId)];
+			this.primitive.setAttribute("TableDecimals", JSON.stringify(decimals));
 			this.render();
 		}
 	}
 	render() {
 		let runNames = getCompareRunNames(this.primitive);
 		if (!runNames.length) runNames = [""];
-		if (!ensureDisplayRunsAvailable(this.primitive, () => this.render())) {
-			this.updateHTML(`<div class="empty-plot-header">Table</div><div style="padding:8px;">Loading selected run data…</div>`);
-			return;
-		}
 		let IdsToDisplay = getDisplayIds(this.primitive);
 		this.primitive.setAttribute("Primitives", IdsToDisplay.join(","));
-		this.data.namesToDisplay = IdsToDisplay.map(findID).map(getName);
+		this.data.namesToDisplay = IdsToDisplay.map(findID).filter(Boolean).map(getName);
+		let selected = this.data.namesToDisplay.length ? this.data.namesToDisplay.map(htmlEscape).join(", ") : "None";
+		let selectedSummary = `<div class="systemika-table-selection-summary"><b>Selected Variable(s):</b> ${selected}</div>`;
+		if (!ensureDisplayRunsAvailable(this.primitive, () => this.render())) {
+			this.updateHTML(`${selectedSummary}<div style="padding:8px;">Loading selected run data…</div>`);
+			return;
+		}
 
 		let bounds = getCompareRunBounds(this.primitive);
 		let limits = JSON.parse(this.primitive.getAttribute("TableLimits"));
@@ -2502,11 +2919,11 @@ class TableVisual extends HtmlTwoPointer {
 			}
 		}
 
-		let number_length = JSON.parse(this.primitive.getAttribute("NumberLength"));
-		let number_options = {
-			round_to_zero_limit,
-			"precision": number_length["usePrecision"] ? number_length["precision"] : undefined,
-			"decimals": number_length["usePrecision"] ? undefined : number_length["decimal"]
+		let tableDecimals = getTableDecimals(this.primitive);
+		let decimalsByVariable = IdsToDisplay.map(id => getTableDecimalForId(this.primitive, id, tableDecimals));
+		let decimalsForValueColumn = (columnIndex) => {
+			let variableIndex = multiRun ? Math.floor(columnIndex / runBlocks.length) : columnIndex;
+			return decimalsByVariable[variableIndex] ?? SYSTEMIKA_TABLE_DEFAULT_DECIMALS;
 		};
 
 		let units = runBlocks.length
@@ -2548,13 +2965,13 @@ class TableVisual extends HtmlTwoPointer {
 			</tr>`;
 		}
 
-		let html = `<table class='sticky-table zebra-odd${multiRun ? " systemika-multi-run-table" : ""}'>
+		let html = `${selectedSummary}<table class='sticky-table zebra-odd${multiRun ? " systemika-multi-run-table" : ""}'>
 			<thead>${headerHtml}</thead>
 			<tbody>
 				${this.data.results.map((row) => {
 					return `<tr>
 						<td class="time-value-cell">${format_number(row[0], { round_to_zero_limit, decimals: time_decimals })}</td>
-						${row.slice(1).map(value => `<td class="prim-value-cell">${value == null ? "" : format_number(value, number_options)}</td>`).join("")}
+						${row.slice(1).map((value, columnIndex) => `<td class="prim-value-cell">${value == null ? "" : format_number(value, { round_to_zero_limit, decimals: decimalsForValueColumn(columnIndex) })}</td>`).join("")}
 					</tr>`;
 				}).join("")}
 			</tbody>
@@ -2583,7 +3000,20 @@ class TableVisual extends HtmlTwoPointer {
 			event.stopPropagation();
 		});
 
-		$(this.htmlElement.cutDiv).dblclick(() => {
+		// Table properties are opened through a dedicated Settings button rather
+		// than double-clicking the scrollable table surface.
+		this.htmlElement.cutDiv.style.position = "relative";
+		this.settingsButton = document.createElement("button");
+		this.settingsButton.type = "button";
+		this.settingsButton.className = "table-settings-button";
+		this.settingsButton.title = "Settings";
+		this.settingsButton.setAttribute("aria-label", "Settings");
+		this.settingsButton.textContent = "⚙";
+		this.htmlElement.cutDiv.appendChild(this.settingsButton);
+		$(this.settingsButton).on("mousedown dblclick", event => event.stopPropagation());
+		$(this.settingsButton).click(event => {
+			event.preventDefault();
+			event.stopPropagation();
 			this.dialog.show();
 		});
 
@@ -2705,6 +3135,508 @@ class HtmlOverlayTwoPointer extends TwoPointer {
 	}
 }
 
+
+function normalizeLegendDashPattern(pattern) {
+	if (Array.isArray(pattern)) {
+		if (pattern.length === 1 && Number(pattern[0]) === 1) return "";
+		return pattern.map(Number).filter(Number.isFinite).join(",");
+	}
+	let text = String(pattern == null ? "" : pattern).toLowerCase();
+	if (!text || text === "solid") return "";
+	if (text === "dashed") return "10,5";
+	if (text === "dotted") return "2,4";
+	return text;
+}
+
+function stylePlotLegendLineSamples(chartDiv, plot, seriesSettings, maxSeries) {
+	if (!chartDiv || !plot) return;
+	let rows = Array.from(chartDiv.querySelectorAll("table.jqplot-table-legend tr"));
+	let visible = [];
+	for (let i = 0; i < (seriesSettings || []).length; i++) {
+		let settings = seriesSettings[i] || {};
+		if (settings.showLabel === false || !settings.label) continue;
+		visible.push({ settings, series: plot.series && plot.series[i] ? plot.series[i] : null });
+		if (maxSeries && visible.length >= maxSeries) break;
+	}
+	for (let i = 0; i < Math.min(rows.length, visible.length); i++) {
+		let cell = rows[i].querySelector("td.jqplot-table-legend-swatch");
+		if (!cell) continue;
+		let item = visible[i];
+		let color = (item.series && item.series.color) || item.settings.color || "#000000";
+		let width = Number(item.settings.lineWidth || (item.series && item.series.lineWidth) || 2);
+		let dash = normalizeLegendDashPattern(item.settings.linePattern || (item.series && item.series.linePattern));
+		cell.innerHTML = "";
+		let svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+		svg.setAttribute("width", "28"); svg.setAttribute("height", "10");
+		svg.setAttribute("viewBox", "0 0 28 10"); svg.style.display = "block";
+		let line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+		line.setAttribute("x1", "1"); line.setAttribute("x2", "27"); line.setAttribute("y1", "5"); line.setAttribute("y2", "5");
+		line.setAttribute("stroke", color); line.setAttribute("stroke-width", String(Math.max(1, width)));
+		if (dash) line.setAttribute("stroke-dasharray", dash);
+		svg.appendChild(line); cell.appendChild(svg);
+	}
+}
+
+function spacePlotLegendFromGrid(chartDiv, gapPixels = 11) {
+	if (!chartDiv) return;
+	let legend = chartDiv.querySelector("table.jqplot-table-legend");
+	if (!legend) return;
+	// jqPlot's outsideGrid layout counts marginLeft when reserving space, but its
+	// absolute legend packing can still leave the legend border directly against
+	// the grid border. Preserve the reserved space and explicitly move the rendered
+	// legend into it so the gap is visibly between the grid and legend.
+	legend.style.marginLeft = "0px";
+	legend.style.transform = `translateX(${Math.max(0, Number(gapPixels) || 0)}px)`;
+	legend.style.transformOrigin = "left center";
+}
+
+function graphExportBaseName() {
+	let base = (fileManager && typeof fileManager.defaultExportBaseName === "function") ? fileManager.defaultExportBaseName() : "Systemika-Graph";
+	return String(base || "Systemika-Graph").replace(/\.[^.]+$/, "");
+}
+
+function graphXmlEscape(value) {
+	return String(value == null ? "" : value)
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&apos;");
+}
+
+function graphPlainText(value) {
+	let text = String(value == null ? "" : value);
+	if (typeof document === "undefined") return text.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ");
+	let div = document.createElement("div");
+	div.innerHTML = text;
+	return (div.textContent || div.innerText || "").replace(/\u00a0/g, " ").trim();
+}
+
+function graphFinite(value, fallback = 0) {
+	let number = Number(value);
+	return Number.isFinite(number) ? number : fallback;
+}
+
+function graphExportDimensions(visual) {
+	let chartDiv = visual && visual.chartDiv;
+	if (!chartDiv) return { width: 1, height: 1 };
+	let rect = chartDiv.getBoundingClientRect ? chartDiv.getBoundingClientRect() : { width: 0, height: 0 };
+	return {
+		width: Math.max(1, Math.ceil(rect.width || parseFloat(chartDiv.style.width) || chartDiv.offsetWidth || 1)),
+		height: Math.max(1, Math.ceil(rect.height || parseFloat(chartDiv.style.height) || chartDiv.offsetHeight || 1))
+	};
+}
+
+const GRAPH_EXPORT_RASTER_SCALE = 3;
+const GRAPH_EXPORT_EDGE_PADDING = 10;
+const GRAPH_EXPORT_LEGEND_GAP = 11;
+
+function graphLegendMetrics(plot, availableWidth = 1000) {
+	if (!plot || !plot.legend || !plot.legend.show || !Array.isArray(plot.series)) return null;
+	let series = plot.series.filter(item => item && item.show !== false && item.showLabel !== false && item.label);
+	if (!series.length) return null;
+	let legendWidth = Math.min(
+		Math.max(90, ...series.map(item => graphPlainText(item.label).length * 6.5 + 48)),
+		Math.max(90, availableWidth - (GRAPH_EXPORT_EDGE_PADDING * 2))
+	);
+	return { series, width: legendWidth, height: 8 + series.length * 20 };
+}
+
+function graphAxisTicksSvg(axis, orientation, grid, width, height) {
+	if (!axis || axis.show === false) return "";
+	let chunks = [];
+	let ticks = Array.isArray(axis._ticks) ? axis._ticks : [];
+	for (let tick of ticks) {
+		if (!tick || tick.show === false || tick.showLabel === false) continue;
+		let value = Number(tick.value);
+		if (!Number.isFinite(value) || typeof axis.u2p !== "function") continue;
+		let pos = axis.u2p(value);
+		if (!Number.isFinite(pos)) continue;
+		let label = graphPlainText(tick.label == null ? tick.value : tick.label);
+		if (!label) continue;
+		if (orientation === "x") {
+			if (pos < grid.left - 1 || pos > grid.right + 1) continue;
+			chunks.push(`<line x1="${pos}" y1="${grid.top}" x2="${pos}" y2="${grid.bottom}" stroke="#e6e6e6" stroke-width="1"/>`);
+			chunks.push(`<text x="${pos}" y="${Math.min(height - 3, grid.bottom + 16)}" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#222">${graphXmlEscape(label)}</text>`);
+		} else if (orientation === "y") {
+			if (pos < grid.top - 1 || pos > grid.bottom + 1) continue;
+			chunks.push(`<line x1="${grid.left}" y1="${pos}" x2="${grid.right}" y2="${pos}" stroke="#e6e6e6" stroke-width="1"/>`);
+			chunks.push(`<text x="${Math.max(2, grid.left - 7)}" y="${pos + 4}" text-anchor="end" font-family="Arial, sans-serif" font-size="11" fill="#222">${graphXmlEscape(label)}</text>`);
+		} else if (orientation === "y2") {
+			if (pos < grid.top - 1 || pos > grid.bottom + 1) continue;
+			chunks.push(`<text x="${Math.min(width - 2, grid.right + 7)}" y="${pos + 4}" text-anchor="start" font-family="Arial, sans-serif" font-size="11" fill="#222">${graphXmlEscape(label)}</text>`);
+		}
+	}
+	return chunks.join("");
+}
+
+function graphSeriesPoints(series) {
+	if (!series || !Array.isArray(series.data) || !series._xaxis || !series._yaxis) return [];
+	let points = [];
+	for (let row of series.data) {
+		if (!row || row.length < 2) continue;
+		let x = Number(row[0]), y = Number(row[1]);
+		if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+		let px = series._xaxis.u2p(x), py = series._yaxis.u2p(y);
+		if (Number.isFinite(px) && Number.isFinite(py)) points.push([px, py]);
+	}
+	return points;
+}
+
+function graphSeriesPath(points, stepped) {
+	if (!points.length) return "";
+	let path = `M ${points[0][0]} ${points[0][1]}`;
+	for (let i = 1; i < points.length; i++) {
+		let previous = points[i - 1], current = points[i];
+		if (stepped) path += ` L ${current[0]} ${previous[1]} L ${current[0]} ${current[1]}`;
+		else path += ` L ${current[0]} ${current[1]}`;
+	}
+	return path;
+}
+
+function graphSeriesSvg(plot) {
+	if (!plot || !Array.isArray(plot.series)) return "";
+	let chunks = [];
+	for (let series of plot.series) {
+		if (!series || series.show === false) continue;
+		let points = graphSeriesPoints(series);
+		if (!points.length) continue;
+		let color = series.color || "#000000";
+		let lineWidth = Math.max(0.5, graphFinite(series.lineWidth, 2));
+		let dash = normalizeLegendDashPattern(series.linePattern);
+		let stepped = !!series.step;
+		let path = graphSeriesPath(points, stepped);
+		let showLine = series.showLine !== false;
+		let fill = !!series.fill;
+		if (fill && series._yaxis && typeof series._yaxis.u2p === "function") {
+			let baseline = series._yaxis.u2p(0);
+			if (!Number.isFinite(baseline)) baseline = Math.max(...points.map(point => point[1]));
+			let fillColor = series.fillColor || color;
+			let fillOpacity = series.fillAlpha != null ? Math.max(0, Math.min(1, Number(series.fillAlpha))) : 0.35;
+			let fillPath = `${path} L ${points[points.length - 1][0]} ${baseline} L ${points[0][0]} ${baseline} Z`;
+			chunks.push(`<path d="${fillPath}" fill="${graphXmlEscape(fillColor)}" fill-opacity="${Number.isFinite(fillOpacity) ? fillOpacity : 0.35}" stroke="none"/>`);
+		}
+		if (showLine) {
+			chunks.push(`<path d="${path}" fill="none" stroke="${graphXmlEscape(color)}" stroke-width="${lineWidth}"${dash ? ` stroke-dasharray="${graphXmlEscape(dash)}"` : ""} stroke-linejoin="round" stroke-linecap="round"/>`);
+		}
+		if (series.showMarker) {
+			let marker = series.markerOptions || {};
+			let size = Math.max(3, graphFinite(marker.size, 6));
+			for (let point of points) {
+				if (String(marker.style || "").toLowerCase().includes("square")) {
+					chunks.push(`<rect x="${point[0] - size / 2}" y="${point[1] - size / 2}" width="${size}" height="${size}" fill="${graphXmlEscape(color)}"/>`);
+				} else chunks.push(`<circle cx="${point[0]}" cy="${point[1]}" r="${size / 2}" fill="${graphXmlEscape(color)}"/>`);
+			}
+		}
+	}
+	return chunks.join("");
+}
+
+function graphCurveNumberPlacements(series) {
+	let points = graphSeriesPoints(series);
+	if (!points.length) return [];
+	if (points.length === 1) return [{ x: points[0][0], y: points[0][1] }];
+
+	let cumulative = [0];
+	let totalLength = 0;
+	for (let i = 1; i < points.length; i++) {
+		let dx = points[i][0] - points[i - 1][0];
+		let dy = points[i][1] - points[i - 1][1];
+		let segmentLength = Math.hypot(dx, dy);
+		if (!Number.isFinite(segmentLength)) segmentLength = 0;
+		totalLength += segmentLength;
+		cumulative.push(totalLength);
+	}
+
+	if (!(totalLength > 1)) {
+		let point = points[Math.floor((points.length - 1) / 2)];
+		return [{ x: point[0], y: point[1] }];
+	}
+
+	// Aim for roughly one repeated run number per 90 screen pixels of curve.
+	// Very short curves still receive one label; very long curves are capped to
+	// avoid turning the plot into a field of numbers.
+	let labelCount = Math.max(1, Math.min(8, Math.round(totalLength / 90)));
+	let placements = [];
+	let segmentIndex = 1;
+	for (let labelIndex = 1; labelIndex <= labelCount; labelIndex++) {
+		let targetLength = totalLength * labelIndex / (labelCount + 1);
+		while (segmentIndex < cumulative.length - 1 && cumulative[segmentIndex] < targetLength) segmentIndex++;
+		let previousLength = cumulative[segmentIndex - 1];
+		let currentLength = cumulative[segmentIndex];
+		let denominator = currentLength - previousLength;
+		let fraction = denominator > 0 ? (targetLength - previousLength) / denominator : 0;
+		let a = points[segmentIndex - 1];
+		let b = points[segmentIndex];
+		placements.push({
+			x: a[0] + (b[0] - a[0]) * fraction,
+			y: a[1] + (b[1] - a[1]) * fraction
+		});
+	}
+	return placements;
+}
+
+function renderXyCurveNumbers(visual) {
+	if (!visual || !visual.chartDiv || !visual.plot) return;
+	Array.from(visual.chartDiv.querySelectorAll(".systemika-xy-curve-number")).forEach(node => node.remove());
+	if (!visual.primitive || visual.primitive.getAttribute("ShowNumber") !== "true") return;
+	let count = Math.min(visual.mainRunSeriesCount || 0, visual.plot.series ? visual.plot.series.length : 0);
+	for (let i = 0; i < count; i++) {
+		let series = visual.plot.series[i];
+		let points = graphCurveNumberPlacements(series);
+		for (let point of points) {
+			let label = document.createElement("div");
+			label.className = "systemika-xy-curve-number";
+			label.textContent = String(i + 1);
+			label.style.position = "absolute";
+			label.style.left = `${point.x}px`;
+			label.style.top = `${point.y}px`;
+			label.style.transform = "translate(-50%, -50%)";
+			label.style.pointerEvents = "none";
+			label.style.zIndex = "8";
+			label.style.fontFamily = "Arial, sans-serif";
+			label.style.fontSize = "13px";
+			label.style.fontWeight = "bold";
+			label.style.lineHeight = "1";
+			label.style.color = (series && series.color) || "#000000";
+			label.style.textShadow = "-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 0 3px #fff";
+			visual.chartDiv.appendChild(label);
+		}
+	}
+}
+
+function graphXyNumbersSvg(visual) {
+	if (!(visual instanceof XyPlotVisual) || !visual.plot || visual.primitive.getAttribute("ShowNumber") !== "true") return "";
+	let chunks = [];
+	let count = Math.min(visual.mainRunSeriesCount || 0, visual.plot.series ? visual.plot.series.length : 0);
+	for (let i = 0; i < count; i++) {
+		let series = visual.plot.series[i];
+		let color = series.color || "#000000";
+		for (let point of graphCurveNumberPlacements(series)) {
+			chunks.push(`<text x="${point.x}" y="${point.y + 4}" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="${graphXmlEscape(color)}" stroke="#ffffff" stroke-width="3" paint-order="stroke fill">${i + 1}</text>`);
+		}
+	}
+	return chunks.join("");
+}
+
+function graphLegendSvg(plot, grid, width) {
+	let metrics = graphLegendMetrics(plot, width);
+	if (!metrics) return "";
+	let { series, width: legendWidth, height } = metrics;
+	let fontSize = 11;
+	let desiredX = grid.right + GRAPH_EXPORT_LEGEND_GAP;
+	let x = Math.min(desiredX, Math.max(GRAPH_EXPORT_EDGE_PADDING, width - legendWidth - GRAPH_EXPORT_EDGE_PADDING));
+	let rowHeight = 20;
+	let y = grid.top + 4;
+	let chunks = [`<g class="systemika-export-legend"><rect x="${x}" y="${y}" width="${legendWidth}" height="${height}" rx="2" ry="2" fill="#ffffff" fill-opacity="0.65" stroke="#cccccc"/>`];
+	for (let i = 0; i < series.length; i++) {
+		let item = series[i], cy = y + 15 + i * rowHeight;
+		let color = item.color || "#000000";
+		let dash = normalizeLegendDashPattern(item.linePattern);
+		let lineWidth = Math.max(1, graphFinite(item.lineWidth, 2));
+		chunks.push(`<line x1="${x + 8}" y1="${cy - 3}" x2="${x + 34}" y2="${cy - 3}" stroke="${graphXmlEscape(color)}" stroke-width="${lineWidth}"${dash ? ` stroke-dasharray="${graphXmlEscape(dash)}"` : ""}/>`);
+		chunks.push(`<text x="${x + 41}" y="${cy}" font-family="Arial, sans-serif" font-size="${fontSize}" fill="#222">${graphXmlEscape(graphPlainText(item.label))}</text>`);
+	}
+	chunks.push("</g>");
+	return chunks.join("");
+}
+
+function graphHistogramNotesSvg(visual, width, height) {
+	if (!(visual instanceof HistoPlotVisual) || !visual.chartDiv) return "";
+	let chunks = [];
+	for (let suffix of ["_histoBelow", "_histoAbove"]) {
+		let node = visual.chartDiv.querySelector(`[id$="${suffix}"]`);
+		if (!node) continue;
+		let lines = String(node.innerText || node.textContent || "").split(/\r?\n/).filter(Boolean);
+		let anchor = suffix.includes("Above") ? "end" : "start";
+		let x = suffix.includes("Above") ? width - 8 : 8;
+		let startY = Math.max(12, height - 8 - (lines.length - 1) * 13);
+		lines.forEach((line, index) => chunks.push(`<text x="${x}" y="${startY + index * 13}" text-anchor="${anchor}" font-family="Arial, sans-serif" font-size="10" fill="#333">${graphXmlEscape(line)}</text>`));
+	}
+	return chunks.join("");
+}
+
+function buildGraphSvgPayload(visual) {
+	if (!visual || !visual.chartDiv || !visual.plot) throw new Error("The graph is not currently rendered.");
+	let plot = visual.plot;
+	let logical = graphExportDimensions(visual);
+	let width = logical.width;
+	let height = logical.height;
+	let padding = plot._gridPadding || {};
+	let grid = {
+		left: graphFinite(padding.left, 45),
+		right: width - graphFinite(padding.right, 18),
+		top: graphFinite(padding.top, 28),
+		bottom: height - graphFinite(padding.bottom, 38)
+	};
+	let legend = graphLegendMetrics(plot, width + 1000);
+	let exportWidth = width + GRAPH_EXPORT_EDGE_PADDING;
+	if (legend) exportWidth = Math.max(exportWidth, grid.right + GRAPH_EXPORT_LEGEND_GAP + legend.width + GRAPH_EXPORT_EDGE_PADDING);
+	let exportHeight = height + GRAPH_EXPORT_EDGE_PADDING;
+	let chunks = [`<svg xmlns="http://www.w3.org/2000/svg" width="${exportWidth}" height="${exportHeight}" viewBox="0 0 ${exportWidth} ${exportHeight}">`];
+	// Intentionally no background rectangle: exported SVG, PNG, and clipboard images remain transparent.
+	chunks.push(graphAxisTicksSvg(plot.axes && plot.axes.xaxis, "x", grid, width, height));
+	chunks.push(graphAxisTicksSvg(plot.axes && plot.axes.yaxis, "y", grid, width, height));
+	chunks.push(graphAxisTicksSvg(plot.axes && plot.axes.y2axis, "y2", grid, width, height));
+	chunks.push(`<rect x="${grid.left}" y="${grid.top}" width="${Math.max(0, grid.right - grid.left)}" height="${Math.max(0, grid.bottom - grid.top)}" fill="none" stroke="#b8b8b8" stroke-width="1"/>`);
+	chunks.push(graphSeriesSvg(plot));
+	chunks.push(graphXyNumbersSvg(visual));
+	let title = graphPlainText(plot.title && plot.title.text);
+	if (title) chunks.push(`<text x="${(grid.left + grid.right) / 2}" y="17" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#111">${graphXmlEscape(title)}</text>`);
+	let xLabel = graphPlainText(plot.axes && plot.axes.xaxis && plot.axes.xaxis.label);
+	if (xLabel) chunks.push(`<text x="${(grid.left + grid.right) / 2}" y="${height - 4}" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#111">${graphXmlEscape(xLabel)}</text>`);
+	let yLabel = graphPlainText(plot.axes && plot.axes.yaxis && plot.axes.yaxis.label);
+	if (yLabel) chunks.push(`<text x="13" y="${(grid.top + grid.bottom) / 2}" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#111" transform="rotate(-90 13 ${(grid.top + grid.bottom) / 2})">${graphXmlEscape(yLabel)}</text>`);
+	let y2Label = graphPlainText(plot.axes && plot.axes.y2axis && plot.axes.y2axis.label);
+	if (y2Label) chunks.push(`<text x="${width - 13}" y="${(grid.top + grid.bottom) / 2}" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#111" transform="rotate(90 ${width - 13} ${(grid.top + grid.bottom) / 2})">${graphXmlEscape(y2Label)}</text>`);
+	chunks.push(graphLegendSvg(plot, grid, exportWidth));
+	chunks.push(graphHistogramNotesSvg(visual, width, height));
+	chunks.push("</svg>");
+	return { svg: chunks.join(""), width: exportWidth, height: exportHeight };
+}
+
+function chartDivToSvg(visual) {
+	return buildGraphSvgPayload(visual).svg;
+}
+
+function downloadDataUrl(filename, dataUrl) {
+	let link = document.createElement("a");
+	link.style.display = "none"; link.href = dataUrl; link.download = filename;
+	document.body.appendChild(link); link.click();
+	setTimeout(() => link.remove(), 0);
+}
+
+function cleanSvgToPngDataUrl(svg, width, height, scale = GRAPH_EXPORT_RASTER_SCALE) {
+	return new Promise((resolve, reject) => {
+		let blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+		let url = URL.createObjectURL(blob);
+		let image = new Image();
+		image.onload = () => {
+			try {
+				let rasterScale = Math.max(1, Number(scale) || 1);
+				let canvas = document.createElement("canvas");
+				canvas.width = Math.max(1, Math.ceil(width * rasterScale));
+				canvas.height = Math.max(1, Math.ceil(height * rasterScale));
+				let ctx = canvas.getContext("2d", { alpha: true });
+				ctx.clearRect(0, 0, canvas.width, canvas.height);
+				ctx.imageSmoothingEnabled = true;
+				ctx.imageSmoothingQuality = "high";
+				ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+				resolve(canvas.toDataURL("image/png"));
+			} catch (error) { reject(error); }
+			finally { URL.revokeObjectURL(url); }
+		};
+		image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Unable to rasterize the SVG graph.")); };
+		image.src = url;
+	});
+}
+
+async function graphPngDataUrl(visual) {
+	let payload = buildGraphSvgPayload(visual);
+	return cleanSvgToPngDataUrl(payload.svg, payload.width, payload.height, GRAPH_EXPORT_RASTER_SCALE);
+}
+
+async function copyGraphVisualToClipboard(visual) {
+	try {
+		if (!visual || !visual.chartDiv || !visual.plot) throw new Error("The graph is not currently available to copy.");
+		let dataUrl = await graphPngDataUrl(visual);
+		let base64 = dataUrl.split(",")[1] || "";
+		let api = typeof getElectronAPI === "function" ? getElectronAPI() : null;
+		if (api && typeof api.copyPngToClipboard === "function") {
+			await api.copyPngToClipboard(base64);
+			return true;
+		}
+		if (typeof navigator !== "undefined" && navigator.clipboard && typeof ClipboardItem !== "undefined") {
+			let response = await fetch(dataUrl);
+			let blob = await response.blob();
+			await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+			return true;
+		}
+		throw new Error("Image clipboard access is not available in this environment.");
+	} catch (error) {
+		xAlert(`Unable to copy figure.<br/><br/>${htmlEscape(error.message || String(error))}`);
+		return false;
+	}
+}
+
+function getSelectedGraphVisual() {
+	let selected = Object.values(get_selected_root_objects()).filter(Boolean);
+	if (selected.length === 1) {
+		let visual = selected[0];
+		if (["timeplot", "compareplot", "xyplot", "histoplot"].includes(String(visual.type || "").toLowerCase()) && visual && visual.plot) return visual;
+	}
+	let dockVisual = window.SystemikaOutputDock ? SystemikaOutputDock.activeVisual : null;
+	return dockVisual && dockVisual instanceof PlotVisual && dockVisual.plot ? dockVisual : null;
+}
+
+async function copySelectedGraphImageToSystemClipboard() {
+	let visual = getSelectedGraphVisual();
+	if (!visual) return false;
+	return copyGraphVisualToClipboard(visual);
+}
+
+async function copySelectionWithFigureImage() {
+	let selectedGraph = getSelectedGraphVisual();
+	let selectedRoots = Object.values(get_selected_root_objects()).filter(Boolean);
+	// Docked outputs are intentionally not selected on the modeling canvas. Capture
+	// the active output directly so toolbar/keyboard Copy does not show the old
+	// "select an object" warning and Systemika Paste still duplicates the output.
+	if (selectedGraph && !selectedRoots.length) {
+		let copied = Clipboard.captureIds([selectedGraph.id], "copy");
+		await copyGraphVisualToClipboard(selectedGraph);
+		return copied;
+	}
+	let copied = Clipboard.copy();
+	if (selectedGraph) await copyGraphVisualToClipboard(selectedGraph);
+	return copied;
+}
+
+async function cutSelectionWithFigureImage() {
+	let selectedGraph = getSelectedGraphVisual();
+	let selectedRoots = Object.values(get_selected_root_objects()).filter(Boolean);
+	if (selectedGraph && !selectedRoots.length) {
+		if (RunResults.isAdvanceActive()) {
+			runOverlay.requestAdvanceTermination(
+				"Cutting an output will terminate the current Advance simulation.",
+				() => cutSelectionWithFigureImage()
+			);
+			return false;
+		}
+		await copyGraphVisualToClipboard(selectedGraph);
+		if (!Clipboard.captureIds([selectedGraph.id], "cut")) return false;
+		tool_deletePrimitive(String(selectedGraph.id));
+		History.storeUndoState();
+		InfoBar.update();
+		return true;
+	}
+	// Render/copy a selected canvas Figure before Clipboard.cut() removes it.
+	if (selectedGraph) await copyGraphVisualToClipboard(selectedGraph);
+	return Clipboard.cut();
+}
+
+async function exportGraphVisual(visual, format) {
+	try {
+		if (!visual || !visual.chartDiv || !visual.plot) throw new Error("The graph is not currently available for export.");
+		let payload = buildGraphSvgPayload(visual);
+		if (format === "svg") {
+			await fileManager.exportFile(payload.svg, ".svg");
+			return;
+		}
+		let dataUrl = await cleanSvgToPngDataUrl(payload.svg, payload.width, payload.height, GRAPH_EXPORT_RASTER_SCALE);
+		let api = typeof getElectronAPI === "function" ? getElectronAPI() : null;
+		if (api && api.writeBase64File && api.showSaveDialog) {
+			let suggested = `${graphExportBaseName()}.png`;
+			let filePath = await api.showSaveDialog(suggested, ".png");
+			if (filePath) {
+				if (!/\.png$/i.test(filePath)) filePath += ".png";
+				await api.writeBase64File(filePath, dataUrl.split(",")[1] || "");
+			}
+		} else downloadDataUrl(`${graphExportBaseName()}.png`, dataUrl);
+	} catch (error) {
+		xAlert(`Unable to export ${String(format || "graph").toUpperCase()}.<br/><br/>${htmlEscape(error.message || String(error))}`);
+	}
+}
+
 class PlotVisual extends HtmlOverlayTwoPointer {
 	getTicks(min, max, dimention = "width") {
 		let length = max - min;
@@ -2754,10 +3686,77 @@ class PlotVisual extends HtmlOverlayTwoPointer {
 
 		return ticks;
 	}
+	syncPageState() {
+		if (window.SystemikaPlotPages && SystemikaPlotPages.isPagedPrimitive(this.primitive)) {
+			SystemikaPlotPages.persistCurrentPage(this.primitive);
+			this.updatePageControls();
+		}
+	}
+	updatePageControls() {
+		if (!this.pageNavDiv || !window.SystemikaPlotPages) return;
+		let info = SystemikaPlotPages.getInfo(this.primitive);
+		let label = info.name || `Page ${info.index + 1}`;
+		let shortLabel = `${label}  ${info.index + 1}/${info.count}`;
+		$(this.pageNavDiv).find(".plot-page-label").text(shortLabel).attr("title", `${label} — Page ${info.index + 1} of ${info.count}`);
+		$(this.pageNavDiv).find(".plot-page-prev").prop("disabled", info.index <= 0);
+		$(this.pageNavDiv).find(".plot-page-next").prop("disabled", info.index >= info.count - 1);
+		$(this.pageNavDiv).find(".plot-page-delete").prop("disabled", info.count <= 1);
+	}
+	refreshForCurrentPage() {
+		if (typeof this.refreshRunSources === "function") this.refreshRunSources();
+		else this.render();
+	}
+	changePage(index) {
+		if (!window.SystemikaPlotPages) return;
+		SystemikaPlotPages.selectPage(this.primitive, index);
+		this.updatePageControls();
+		this.refreshForCurrentPage();
+	}
+	addPage() {
+		if (!window.SystemikaPlotPages) return;
+		SystemikaPlotPages.addPage(this.primitive);
+		this.updatePageControls();
+		this.refreshForCurrentPage();
+		History.storeUndoState();
+	}
+	deletePage() {
+		if (!window.SystemikaPlotPages) return;
+		let info = SystemikaPlotPages.getInfo(this.primitive);
+		if (info.count <= 1) return;
+		SystemikaPlotPages.deletePage(this.primitive);
+		this.updatePageControls();
+		this.refreshForCurrentPage();
+		History.storeUndoState();
+	}
+	updateDockedGraphics() {
+		let view = SystemikaOutputDock.view();
+		if (!view || !this.chartDiv || !this.targetElement) return;
+		let width = Math.max(220, view.clientWidth || 220);
+		let height = Math.max(160, view.clientHeight || 160);
+		this.targetElement.style.width = `${width}px`;
+		this.targetElement.style.height = `${height}px`;
+		this.targetElement.style.left = "0px";
+		this.targetElement.style.top = "0px";
+		this.targetElement.style.transform = "none";
+		let newWidth = `${Math.max(120, width - 10)}px`;
+		let newHeight = `${Math.max(90, height - 38)}px`;
+		let changed = this.chartDiv.style.width !== newWidth || this.chartDiv.style.height !== newHeight;
+		this.chartDiv.style.width = newWidth;
+		this.chartDiv.style.height = newHeight;
+		if (changed && typeof this.updateChart === "function") {
+			if (this.updateChartTimeOut) clearTimeout(this.updateChartTimeOut);
+			this.updateChartTimeOut = setTimeout(() => this.updateChart(), 10);
+		}
+		this.updatePageControls();
+	}
 	updateGraphics() {
+		if (SystemikaOutputDock.activeVisual === this) {
+			this.updateDockedGraphics();
+			return;
+		}
 		super.updateGraphics();
-		let newWidth = `${$(this.targetElement).width() - 10}px`;
-		let newHeight = `${$(this.targetElement).height() - 10}px`;
+		let newWidth = `${Math.max(40, $(this.targetElement).width() - 10)}px`;
+		let newHeight = `${Math.max(30, $(this.targetElement).height() - 38)}px`;
 		let oldWidth = this.chartDiv.style.width;
 		let oldHeight = this.chartDiv.style.height;
 		if (oldWidth !== newWidth || oldHeight !== newHeight) {
@@ -2772,14 +3771,46 @@ class PlotVisual extends HtmlOverlayTwoPointer {
 			}
 			this.updateChartTimeOut = setTimeout(this.updateChart.bind(this), 10);
 		}
+		this.updatePageControls();
 	}
 	makeGraphics() {
 		super.makeGraphics();
 
 		this.chartId = this.id + "_chart";
-		let html = `<div id="${this.chartId}" style="width:0px; height:0px; z-index: 100;"></div>`;
+		this.pageNavId = this.id + "_page_nav";
+		let html = `<div class="systemika-paged-plot">
+			<div id="${this.chartId}" style="width:0px; height:0px; z-index: 100;"></div>
+			<div id="${this.pageNavId}" class="systemika-plot-page-nav">
+				<button type="button" class="plot-page-prev" title="Previous page">&#8249;</button>
+				<span class="plot-page-label" title="Plot page">Page 1  1/1</span>
+				<button type="button" class="plot-page-next" title="Next page">&#8250;</button>
+				<button type="button" class="plot-page-add" title="Add page" aria-label="Add page">+</button>
+				<button type="button" class="plot-page-delete" title="Delete page" aria-label="Delete page">−</button>
+			</div>
+		</div>`;
 		this.updateHTML(html);
 		this.chartDiv = document.getElementById(this.chartId);
+		this.pageNavDiv = document.getElementById(this.pageNavId);
+		// Properties are always visible in the lower Output pane, so plot surfaces
+		// do not need a separate Settings button or double-click shortcut.
+		$(this.targetElement).off("dblclick contextmenu");
+		if (window.SystemikaPlotPages) SystemikaPlotPages.ensure(this.primitive);
+		$(this.pageNavDiv).on("mousedown click dblclick", event => event.stopPropagation());
+		$(this.pageNavDiv).find(".plot-page-prev").click(() => {
+			let info = SystemikaPlotPages.getInfo(this.primitive);
+			this.changePage(info.index - 1);
+		});
+		$(this.pageNavDiv).find(".plot-page-next").click(() => {
+			let info = SystemikaPlotPages.getInfo(this.primitive);
+			this.changePage(info.index + 1);
+		});
+		$(this.pageNavDiv).find(".plot-page-add").click(() => this.addPage());
+		$(this.pageNavDiv).find(".plot-page-delete").click(() => this.deletePage());
+		this.updatePageControls();
+	}
+	clean() {
+		SystemikaOutputDock.unregisterVisual(this);
+		super.clean();
 	}
 	doubleClick() {
 		this.dialog.show();
@@ -2805,6 +3836,7 @@ class TimePlotVisual extends PlotVisual {
 		this.dialog.subscribePool.subscribe(() => {
 			this.render();
 		});
+		SystemikaOutputDock.registerVisual(this);
 	}
 	removePlotReference(removeId) {
 		let result = removeDisplayId(this.primitive, removeId);
@@ -2821,15 +3853,14 @@ class TimePlotVisual extends PlotVisual {
 		this.fetchedIds = getDisplayIds(this.primitive);
 
 		this.data.resultIds = ["time"].concat(this.fetchedIds);
-		let auto_plot_per = JSON.parse(this.primitive.getAttribute("AutoPlotPer"));
-		let plot_per = Number(this.primitive.getAttribute("PlotPer"));
-		if (auto_plot_per && plot_per !== this.dialog.getDefaultPlotPeriod()) {
-			plot_per = this.dialog.getDefaultPlotPeriod();
-			this.primitive.setAttribute("PlotPer", plot_per);
-		}
+		// Plot Period is no longer user-configurable. Always render at the
+		// selected run's native simulation time step.
+		let plot_per = Number(this.dialog.getDefaultPlotPeriod());
+		if (!Number.isFinite(plot_per) || plot_per <= 0) plot_per = Number(this.primitive.getAttribute("PlotPer")) || 1;
 		this.data.results = RunResults.getFilteredSelectiveIdResults(this.fetchedIds, RunResults.getDataTimeStart(runName), RunResults.getDataTimeLength(runName), plot_per, runName);
 	}
 	render() {
+		this.syncPageState();
 		if (this.fetchData() === false) {
 			this.setEmptyPlot();
 			return;
@@ -2843,10 +3874,13 @@ class TimePlotVisual extends PlotVisual {
 			(node) => node.getAttribute("Color")
 		);
 
-		let types_to_display = idsToDisplay.map(findID).map(node => get_object(node.id).type);
-		let line_options = JSON.parse(this.primitive.getAttribute("LineOptions"));
-		this.patternsToDisplay = types_to_display.map(type => line_options[type] ? line_options[type]["pattern"] : [1]);
-		this.widthsToDisplay = types_to_display.map(type => line_options[type] ? line_options[type]["width"] : 2);
+		// Line style is configured per plotted model entity. All entities share
+		// the same solid/2px default until the user customizes them.
+		let styleForId = id => typeof getPlotLineStyle === "function"
+			? getPlotLineStyle(this.primitive, id)
+			: { pattern: [1], width: 2 };
+		this.patternsToDisplay = idsToDisplay.map(id => styleForId(id).pattern);
+		this.widthsToDisplay = idsToDisplay.map(id => styleForId(id).width);
 
 		if (this.data.results.length == 0) {
 			this.setEmptyPlot();
@@ -2983,9 +4017,12 @@ class TimePlotVisual extends PlotVisual {
 			},
 			legend: {
 				show: true,
-				placement: 'outsideGrid'
+				placement: 'outsideGrid',
+				marginLeft: '20px'
 			}
 		});
+		stylePlotLegendLineSamples(this.chartDiv, this.plot, this.serieSettingsArray);
+		spacePlotLegendFromGrid(this.chartDiv);
 		if (axisLimits.leftaxis.auto && this.serieSettingsArray.map(ss => ss["yaxis"]).includes("yaxis")) {
 			if (!isNaN(this.plot.axes.yaxis.min) && !isNaN(this.plot.axes.yaxis.max)) {
 				axisLimits.leftaxis.min = this.plot.axes.yaxis.min;
@@ -3070,7 +4107,7 @@ class DataGenerations {
 			this.resultGen.splice(genIndex, 1)
 		}
 	}
-	append(ids, results, lineOptions, runLabel, allowStoredRun) {
+	append(ids, results, plotPrimitive, runLabel, allowStoredRun) {
 		if ((!RunResults.simulationDone && !allowStoredRun) || results.length == 0) return;
 		this.resultGen.push(results);
 		this.numGenerations++;
@@ -3086,15 +4123,13 @@ class DataGenerations {
 		this.colorGen.push(ids.map(findID).map(
 			node => node.getAttribute('Color') ? node.getAttribute('Color') : defaultStroke
 		));
-		let types = ids.map(findID).map(node => get_object(node.id).type);
-		this.patternGen.push(
-			types.map(type => lineOptions[type]["pattern"])
-		);
-		this.lineWidthGen.push(
-			types.map(type => lineOptions[type]["width"])
-		);
+		let styleForId = id => typeof getPlotLineStyle === "function"
+			? getPlotLineStyle(plotPrimitive, id)
+			: { pattern: [1], width: 2 };
+		this.patternGen.push(ids.map(id => styleForId(id).pattern));
+		this.lineWidthGen.push(ids.map(id => styleForId(id).width));
 	}
-	setCurrent(ids, results, lineOptions) {
+	setCurrent(ids, results, plotPrimitive) {
 		// Remove last
 		if (this.idGen.length !== 0) {
 			let removedIds = this.idGen.pop();
@@ -3112,7 +4147,7 @@ class DataGenerations {
 		}
 
 		// Add new
-		this.append(ids, results, lineOptions);
+		this.append(ids, results, plotPrimitive);
 	}
 	iterator() {
 		let genIndex = 0;
@@ -3276,6 +4311,7 @@ class ComparePlotVisual extends PlotVisual {
 		// It therefore cannot rely solely on the run-finished subscription event.
 		// Populate it from the already available Current/latest dataset now.
 		setTimeout(() => this.refreshRunSources(), 0);
+		SystemikaOutputDock.registerVisual(this);
 	}
 	removePlotReference(removeId) {
 		let result = removeDisplayId(this.primitive, removeId);
@@ -3290,6 +4326,7 @@ class ComparePlotVisual extends PlotVisual {
 		return true;
 	}
 	async refreshRunSources() {
+		this.syncPageState();
 		let request = ++this.runSourceRequest;
 		let runNames = getCompareRunNames(this.primitive);
 		let savedNames = runNames.filter(Boolean);
@@ -3307,20 +4344,14 @@ class ComparePlotVisual extends PlotVisual {
 		if (request !== this.runSourceRequest) return;
 
 		this.fetchedIds = getDisplayIds(this.primitive);
-		let autoPlotPer = JSON.parse(this.primitive.getAttribute("AutoPlotPer"));
-		let plotPer = Number(this.primitive.getAttribute("PlotPer"));
-		if (autoPlotPer) {
-			let steps = runNames
-				.map(name => Number(RunResults.getTimeStep(name)))
-				.filter(value => Number.isFinite(value) && value > 0);
-			let defaultPlotPer = steps.length ? Math.min(...steps) : Number(this.dialog.getDefaultPlotPeriod());
-			if (Number.isFinite(defaultPlotPer) && defaultPlotPer > 0 && plotPer !== defaultPlotPer) {
-				plotPer = defaultPlotPer;
-				this.primitive.setAttribute("PlotPer", plotPer);
-			}
-		}
+		// Plot Period is no longer user-configurable. For multi-run plots,
+		// use the finest native simulation time step among the selected runs.
+		let steps = runNames
+			.map(name => Number(RunResults.getTimeStep(name)))
+			.filter(value => Number.isFinite(value) && value > 0);
+		let plotPer = steps.length ? Math.min(...steps) : Number(this.dialog.getDefaultPlotPeriod());
+		if (!Number.isFinite(plotPer) || plotPer <= 0) plotPer = Number(this.primitive.getAttribute("PlotPer")) || 1;
 
-		let lineOptions = JSON.parse(this.primitive.getAttribute("LineOptions"));
 		this.gens.reset();
 		for (let runName of runNames) {
 			// The unnamed source is the live/current run. During Advance it is
@@ -3336,7 +4367,7 @@ class ComparePlotVisual extends PlotVisual {
 				let current = window.systemikaSimulationData ? systemikaSimulationData.getCurrentRun() : null;
 				label = current && current.runName ? `${current.runName} (current)` : "Current";
 			}
-			this.gens.append(this.fetchedIds, results, lineOptions, label, true);
+			this.gens.append(this.fetchedIds, results, this.primitive, label, true);
 		}
 		this.render();
 	}
@@ -3404,8 +4435,10 @@ class ComparePlotVisual extends PlotVisual {
 				formatString: "Time = %.5p<br/>Value = %.5p",
 				useAxesFormatters: false
 			},
-			legend: { show: true, placement: 'outsideGrid' }
+			legend: { show: true, placement: 'outsideGrid', marginLeft: '20px' }
 		});
+		stylePlotLegendLineSamples(this.chartDiv, this.plot, this.serieSettingsArray);
+		spacePlotLegendFromGrid(this.chartDiv);
 		if (!isNaN(this.plot.axes.yaxis.min) && !isNaN(this.plot.axes.yaxis.max)) {
 			axisLimits.yaxis.min = this.plot.axes.yaxis.min;
 			axisLimits.yaxis.max = this.plot.axes.yaxis.max;
@@ -3528,6 +4561,7 @@ class HistoPlotVisual extends PlotVisual {
 		this.dialog.subscribePool.subscribe(() => {
 			this.render();
 		});
+		SystemikaOutputDock.registerVisual(this);
 	}
 
 	getHistogramSettings(dataSets) {
@@ -3613,6 +4647,7 @@ class HistoPlotVisual extends PlotVisual {
 	}
 
 	render() {
+		this.syncPageState();
 		if (!ensureDisplayRunsAvailable(this.primitive, () => this.render())) {
 			this.setEmptyPlot();
 			return;
@@ -3664,7 +4699,6 @@ class HistoPlotVisual extends PlotVisual {
 		this.histograms = [];
 		this.runLabels = [];
 		this.ticks = [];
-		let usePDF = (this.primitive.getAttribute("ScaleType") === "PDF");
 		let tickDecimal = Number.isInteger((settings.max - settings.min) / settings.numBars) ? 0 : 2;
 		let multipleRuns = runResults.length > 1;
 
@@ -3677,13 +4711,11 @@ class HistoPlotVisual extends PlotVisual {
 			let serie = [];
 			for (let i = 0; i < histogram.bars.length; i++) {
 				let bar = histogram.bars[i];
-				let barValue = usePDF
-					? (histogram.data.length ? bar.data.length / histogram.data.length : 0)
-					: bar.data.length;
+				let barValue = bar.data.length;
 				serie.push([bar.lowerLimit, barValue]);
 				labels.push("");
 				serie.push([(bar.lowerLimit + bar.upperLimit) / 2, barValue]);
-				labels.push(usePDF ? barValue.toFixed(3) : barValue.toString());
+				labels.push(barValue.toString());
 				serie.push([bar.upperLimit, barValue]);
 				labels.push("");
 			}
@@ -3755,14 +4787,13 @@ class HistoPlotVisual extends PlotVisual {
 			tempTick = this.ticks.filter((_, index) => index % tickIndexSkip === 0 || index === this.ticks.length - 1);
 		}
 
-		let scaleType = this.primitive.getAttribute("ScaleType");
 		let targetPrimName = `${getName(findID(getDisplayIds(this.primitive)[0]))}`;
 		let multipleRuns = this.serieArray.length > 1;
 
 		$.jqplot.config.enablePlugins = true;
 		this.plot = $.jqplot(this.chartId, this.serieArray, {
 			series: this.serieSettingsArray,
-			title: `${scaleType} of ${targetPrimName}`,
+			title: `Histogram of ${targetPrimName}`,
 			sortData: false,
 			grid: {
 				background: "transparent",
@@ -3796,11 +4827,13 @@ class HistoPlotVisual extends PlotVisual {
 			},
 			legend: multipleRuns ? {
 				show: true,
-				placement: "outsideGrid"
+				placement: "outsideGrid",
+				marginLeft: "20px"
 			} : {
 				show: false
 			}
 		});
+		spacePlotLegendFromGrid(this.chartDiv);
 
 		// Keep single-run histograms visually neutral and print-friendly without
 		// re-enabling jqPlot's fragile one-series fillAndStroke path. jqPlot fills
@@ -3811,15 +4844,12 @@ class HistoPlotVisual extends PlotVisual {
 			let xAxis = this.plot.axes && this.plot.axes.xaxis;
 			let yAxis = this.plot.axes && this.plot.axes.yaxis;
 			if (ctx && xAxis && yAxis) {
-				let usePDF = (scaleType === "PDF");
 				let yBase = yAxis.series_u2p(0);
 				ctx.save();
 				ctx.strokeStyle = "#000000";
 				ctx.lineWidth = 1;
 				for (let bar of histogram.bars) {
-					let barValue = usePDF
-						? (histogram.data.length ? bar.data.length / histogram.data.length : 0)
-						: bar.data.length;
+					let barValue = bar.data.length;
 					if (barValue <= 0) continue;
 					let x1 = xAxis.series_u2p(bar.lowerLimit);
 					let x2 = xAxis.series_u2p(bar.upperLimit);
@@ -3910,12 +4940,14 @@ class XyPlotVisual extends PlotVisual {
 		this.dialog = new XyPlotDialog(id);
 		this.dialog.subscribePool.subscribe(() => this.render());
 		setTimeout(() => this.render(), 0);
+		SystemikaOutputDock.registerVisual(this);
 	}
 	removePlotReference(removeId) {
 		let result = removeDisplayId(this.primitive, removeId);
 		if (result) this.render();
 	}
 	render() {
+		this.syncPageState();
 		let runNames = getCompareRunNames(this.primitive);
 		if (!ensureDisplayRunsAvailable(this.primitive, () => this.render())) {
 			this.setEmptyPlot();
@@ -3930,18 +4962,13 @@ class XyPlotVisual extends PlotVisual {
 			return;
 		}
 
-		let autoPlotPer = JSON.parse(this.primitive.getAttribute("AutoPlotPer"));
-		let plotPer = Number(this.primitive.getAttribute("PlotPer"));
-		if (autoPlotPer) {
-			let steps = runNames
-				.map(name => Number(RunResults.getTimeStep(name)))
-				.filter(value => Number.isFinite(value) && value > 0);
-			let defaultPlotPer = steps.length ? Math.min(...steps) : Number(this.dialog.getDefaultPlotPeriod());
-			if (Number.isFinite(defaultPlotPer) && defaultPlotPer > 0 && plotPer !== defaultPlotPer) {
-				plotPer = defaultPlotPer;
-				this.primitive.setAttribute("PlotPer", plotPer);
-			}
-		}
+		// Plot Period is no longer user-configurable. For multi-run plots,
+		// use the finest native simulation time step among the selected runs.
+		let steps = runNames
+			.map(name => Number(RunResults.getTimeStep(name)))
+			.filter(value => Number.isFinite(value) && value > 0);
+		let plotPer = steps.length ? Math.min(...steps) : Number(this.dialog.getDefaultPlotPeriod());
+		if (!Number.isFinite(plotPer) || plotPer <= 0) plotPer = Number(this.primitive.getAttribute("PlotPer")) || 1;
 
 		this.serieXName = this.namesToDisplay[0];
 		this.serieYName = this.namesToDisplay[1];
@@ -3957,10 +4984,11 @@ class XyPlotVisual extends PlotVisual {
 
 			let label = runName || getCurrentRunSourceName() || "Current";
 			let showLine = this.primitive.getAttribute("ShowLine") === "true";
-			let showMarker = this.primitive.getAttribute("ShowMarker") === "true";
-			// A one-point XY run cannot draw a line segment. Make that point visible
-			// even when the user has left markers disabled.
-			if (dataSerie.length === 1 && !showMarker) showMarker = true;
+			let showNumber = this.primitive.getAttribute("ShowNumber") === "true";
+			// Systemika uses curve numbers rather than generic point markers. A lone
+			// point still gets an automatic marker so an otherwise valid one-point run is visible.
+			let showMarker = dataSerie.length === 1;
+			let seriesNumber = this.mainRunSeriesCount + 1;
 			this.serieArray.push(dataSerie);
 			// Preserve the original StochSD single-series jqPlot configuration when
 			// only one run is selected. The multi-run rewrite added comparison label
@@ -3968,19 +4996,17 @@ class XyPlotVisual extends PlotVisual {
 			// can leave a lone XY series unpainted. Multiple runs still use labels
 			// and jqPlot's normal series palette for comparison.
 			let settings = {
-				lineWidth: this.primitive.getAttribute("LineWidth"),
+				// XY plots intentionally use one fixed, thick line width.
+				lineWidth: 2,
 				shadow: false,
 				showLine,
 				showMarker,
 				markerOptions: { shadow: false, size: 5 },
 				pointLabels: { show: false }
 			};
-			if (this.singleRunMode) {
-				settings.color = "black";
-			} else {
-				settings.label = label;
-				settings.showLabel = true;
-			}
+			if (this.singleRunMode) settings.color = "black";
+			settings.label = `${showNumber ? `${seriesNumber}. ` : ""}${label}`;
+			settings.showLabel = !this.singleRunMode || showNumber;
 			this.serieSettingsArray.push(settings);
 			this.mainRunSeriesCount++;
 
@@ -4076,10 +5102,14 @@ class XyPlotVisual extends PlotVisual {
 		};
 		// Keep the one-run path as close as possible to the original XY Plot:
 		// no comparison legend configuration is installed at all.
-		if (!this.singleRunMode) {
-			plotOptions.legend = { show: this.mainRunSeriesCount > 1, placement: "outsideGrid" };
+		let showNumbers = this.primitive.getAttribute("ShowNumber") === "true";
+		if (!this.singleRunMode || showNumbers) {
+			plotOptions.legend = { show: this.mainRunSeriesCount > 1 || showNumbers, placement: "outsideGrid", marginLeft: "20px" };
 		}
 		this.plot = $.jqplot(this.chartId, this.serieArray, plotOptions);
+		stylePlotLegendLineSamples(this.chartDiv, this.plot, this.serieSettingsArray, this.mainRunSeriesCount);
+		spacePlotLegendFromGrid(this.chartDiv);
+		renderXyCurveNumbers(this);
 		if (axisLimits.xaxis.auto) {
 			axisLimits.xaxis.min = this.plot.axes.xaxis.min;
 			axisLimits.xaxis.max = this.plot.axes.xaxis.max;
@@ -4674,6 +5704,14 @@ class RunTool extends BaseTool {
 	}
 }
 
+// Stable bridge for the Run Name input and other UI modules loaded before
+// editor.js.  Keeping the actual RunTool private to the editor avoids exposing
+// all toolbar implementation details while still giving text controls one
+// intentional way to start/pause a run.
+if (typeof window !== "undefined") {
+	window.systemikaRunModel = () => RunTool.enterTool();
+}
+
 class StepTool extends BaseTool {
 	static async enterTool() {
 		if (RunResults.isAdvanceActive()) {
@@ -4714,7 +5752,18 @@ class DeleteTool extends BaseTool {
 		}
 		let selected_ids = Object.keys(get_selected_root_objects());
 		if (selected_ids.length == 0) {
-			xAlert("You must select at least one model entity to delete");
+			// Outputs no longer live on the modeling canvas.  Treat the currently
+			// active docked plot/table as the Delete target when there is no model
+			// selection, preserving the old ability to remove an output object.
+			let dockOutput = window.SystemikaOutputDock ? SystemikaOutputDock.activeVisual : null;
+			if (dockOutput && SystemikaOutputDock.isOutputVisual(dockOutput)) {
+				tool_deletePrimitive(String(dockOutput.id));
+				History.storeUndoState();
+				InfoBar.update();
+				ToolBox.setTool("mouse");
+				return;
+			}
+			xAlert("You must select at least one model entity or activate an output to delete");
 			ToolBox.setTool("mouse");
 			return;
 		}
@@ -6285,10 +7334,13 @@ function mouseUpHandler(event) {
 		do_global_log("mouseUpHandler");
 		let { x, y } = mousePosition(event);
 
+		// A click/selection rectangle on empty canvas is UI state only.  It must not
+		// create a model undo snapshot or trigger the Unsaved Changes indicator.
+		let wasBlankCanvasInteraction = currentTool === MouseTool && mouse.emptyClickDown;
 		currentTool.leftMouseUp(x, y, event.shiftKey);
 		mouse.isLeftDown = false;
 		InfoBar.update();
-		History.storeUndoState();
+		if (!wasBlankCanvasInteraction) History.storeUndoState();
 	} else if (event.which == mouse.middle) {
 		event.preventDefault()
 		MousePan.end()
@@ -6364,7 +7416,6 @@ class ToolBox {
 			"compareplot": ComparePlotTool,
 			"xyplot": XyPlotTool,
 			"histoplot": HistoPlotTool,
-			"numberbox": NumberboxTool,
 			"clear": ClearTool,
 			"run": RunTool,
 			"step": StepTool,
@@ -6478,10 +7529,10 @@ class Clipboard {
 			targetId: ends[1] ? String(ends[1].id) : null
 		};
 	}
-	static capture(mode = "copy") {
-		let ids = this.getSelectionRootIds();
-		if (!ids.length) return false;
-		let items = ids.map(id => this.snapshotPrimitive(id)).filter(Boolean);
+	static captureIds(ids, mode = "copy") {
+		let normalizedIds = Array.from(ids || []).map(String).filter(Boolean);
+		if (!normalizedIds.length) return false;
+		let items = normalizedIds.map(id => this.snapshotPrimitive(id)).filter(Boolean);
 		if (!items.length) return false;
 		this.items = items;
 		this.mode = mode;
@@ -6489,6 +7540,9 @@ class Clipboard {
 		this.pasteCount = 0;
 		this.updateButtons();
 		return true;
+	}
+	static capture(mode = "copy") {
+		return this.captureIds(this.getSelectionRootIds(), mode);
 	}
 	static copy() {
 		if (!this.capture("copy")) {
@@ -6695,6 +7749,11 @@ $(window).load(function () {
 	}
 
 	$(".tool-button").mousedown(function (event) {
+		if ($(this).closest(".output-actions").length && window.SystemikaOutputDock) {
+			event.preventDefault();
+			SystemikaOutputDock.openType($(this).attr("data-tool"));
+			return;
+		}
 		if ($(this).attr("data-action") === "toggle-question-marks") {
 			event.preventDefault();
 			DefinitionQuestionMarks.toggle();
@@ -6712,6 +7771,16 @@ $(window).load(function () {
 	}
 
 	$(document).keydown(function (event) {
+		// Editor shortcuts apply only to the modeling workspace. Text entry in any
+		// input/select/textarea/contenteditable field must remain ordinary text.
+		// The toolbar Run Name field handles its own intentional Enter/Ctrl+Run
+		// exceptions before the event can reach this document handler.
+		let eventTarget = event.target;
+		let editableTarget = eventTarget && (
+			/^(INPUT|TEXTAREA|SELECT)$/.test(String(eventTarget.tagName || "").toUpperCase()) ||
+			eventTarget.isContentEditable || $(eventTarget).closest("[contenteditable='true']").length
+		);
+		if (editableTarget) return;
 		// Only works if no dialog is open
 		if (jqDialog.blockingDialogOpen) {
 			return;
@@ -6796,10 +7865,6 @@ $(window).load(function () {
 				if (event.shiftKey && fileManager.hasSaveAs()) $("#btn_save_as").click();
 				else $("#btn_save").click();
 			}
-			if (event.key.toLowerCase() == "p") {
-				event.preventDefault();
-				$("#btn_print_model").click();
-			}
 			if (event.key.toLowerCase() == "a") {
 				if (RunResults.isAdvanceActive()) {
 					unselect_all();
@@ -6821,11 +7886,11 @@ $(window).load(function () {
 			}
 			if (event.key.toLowerCase() == "c") {
 				event.preventDefault();
-				Clipboard.copy();
+				void copySelectionWithFigureImage();
 			}
 			if (event.key.toLowerCase() == "x") {
 				event.preventDefault();
-				Clipboard.cut();
+				void cutSelectionWithFigureImage();
 			}
 			if (event.key.toLowerCase() == "v") {
 				event.preventDefault();
@@ -6838,6 +7903,7 @@ $(window).load(function () {
 				// when exactly one Link is selected it opens Link Properties; otherwise
 				// it starts Link creation. Dialogs/text inputs stop propagation.
 				const toolShortcuts = {
+					e: "equations",
 					s: "stock",
 					f: "flow",
 					a: "variable",
@@ -6847,7 +7913,6 @@ $(window).load(function () {
 					p: "compareplot",
 					t: "table",
 					x: "xyplot",
-					n: "numberbox",
 					h: "histoplot",
 					r: "rotatename"
 				};
@@ -6862,6 +7927,9 @@ $(window).load(function () {
 					} else {
 						ToolBox.setTool("link");
 					}
+				} else if (["e", "p", "t", "x", "h"].includes(key) && window.SystemikaOutputDock) {
+					event.preventDefault();
+					SystemikaOutputDock.openType(toolShortcuts[key]);
 				} else if (toolShortcuts[key]) ToolBox.setTool(toolShortcuts[key]);
 				else if (key === "z") ToolBox.setTool(lastTool);
 			}
@@ -6934,14 +8002,8 @@ $(window).load(function () {
 	// Settings. This replaces the old double-click-only interaction, which was
 	// unnecessarily difficult to discover and inconsistent with toolbar controls.
 	$("#progress-bar").click(openSimulationSettings)
-	$("#btn_equation_list").click(function () {
-		equationList.show();
-	});
-	$("#btn_print_model").click(function () {
-		printDiagram();
-	});
-	$("#btn_copy").click(function () { Clipboard.copy(); });
-	$("#btn_cut").click(function () { Clipboard.cut(); });
+	$("#btn_copy").click(function () { void copySelectionWithFigureImage(); });
+	$("#btn_cut").click(function () { void cutSelectionWithFigureImage(); });
 	$("#btn_paste").click(function () { Clipboard.paste(); });
 	let closeColourPicker = () => {
 		let picker = document.getElementById("toolbar-colour-picker");
@@ -7101,6 +8163,10 @@ $(window).load(function () {
 	licenseDialog = new LicenseDialog();
 	directoryDialog = new DirectoryDialog();
 	browserModelsDialog = new BrowserModelsDialog();
+	if (window.SystemikaOutputDock) {
+		SystemikaOutputDock.init();
+		SystemikaOutputDock.onModelSynced();
+	}
 
 	// When the program is fully loaded we create a new model
 	//~ fileManager.newModel();
@@ -7123,7 +8189,11 @@ $(window).load(function () {
 			History.updateUnsavedState();
 		}
 	} else {
-		History.updateUnsavedState();
+		// A file loaded from disk/browser storage may not use Systemika's canonical
+		// XML formatting. Normalize a genuinely clean loaded baseline once the model
+		// has been parsed so later harmless clicks compare model state to model state,
+		// not normalized XML text to the original file's formatting.
+		if (!History.normalizeCleanBaseline()) History.updateUnsavedState();
 	}
 	InfoBar.init();
 });
@@ -7164,17 +8234,17 @@ function find_end_connections(visual) {
 function removePlotReferences(id) {
 	for (let plotId in connection_array) {
 		let visual = connection_array[plotId];
-		let type = visual.type
-		switch (type) {
-			case ("timeplot"):
-			case ("xyplot"):
-			case ("table"):
-			case ("compareplot"):
-				visual.removePlotReference(id);
-				break;
-			default:
-			/** Do nothing */
+		let type = visual.type;
+		if (["timeplot", "compareplot", "xyplot", "histoplot"].includes(type)
+			&& window.SystemikaPlotPages && visual.primitive) {
+			let changed = SystemikaPlotPages.removeReference(visual.primitive, id);
+			if (changed) {
+				visual.updatePageControls && visual.updatePageControls();
+				visual.refreshForCurrentPage ? visual.refreshForCurrentPage() : visual.render();
+			}
+			continue;
 		}
+		if (type === "table" && visual.removePlotReference) visual.removePlotReference(id);
 	}
 }
 
@@ -7563,6 +8633,7 @@ function syncAllVisuals() {
 	cleanUnconnectedLinks();
 	update_all_objects();
 	unselect_all();
+	if (window.SystemikaOutputDock && document.getElementById("systemika-output-panel")) SystemikaOutputDock.onModelSynced();
 }
 
 function findFreeName(basename) {
@@ -8438,6 +9509,16 @@ class jqDialog {
 		this.dialogDiv.appendChild(this.dialogContent);
 		document.body.appendChild(this.dialogDiv);
 
+		// Escape closes Systemika dialogs even when focus is inside a text field
+		// whose own keyboard handler stops propagation (for example Manage Runs).
+		this.dialogDiv.addEventListener("keydown", (event) => {
+			if (event.key === "Escape" && this.visible) {
+				event.preventDefault();
+				event.stopPropagation();
+				$(this.dialog).dialog("close");
+			}
+		}, true);
+
 		this.dialogContent.setAttribute("style", "display: inline-block");
 
 
@@ -8888,12 +9969,15 @@ class SystemikaRunsManagerDialog extends jqDialog {
 				<div class="systemika-runs-manager-status" style="min-height:1.4em; margin-top:0.5rem;"></div>
 			</div>`);
 		this.nameInput = $(this.dialogContent).find("#systemika-runs-manager-name");
+		// Run names are ordinary text.  Never let letters typed here bubble to
+		// the editor's single-key creation shortcuts.
+		this.nameInput.on("keydown keyup keypress", event => event.stopPropagation());
 	}
 	beforeCreateDialog() {
 		this.dialogParameters.buttons = {
 			"Rename": () => this.renameSelected(),
-			"Duplicate": () => this.duplicateSelected(),
 			"Delete": () => this.deleteSelected(),
+			"Delete All": () => this.deleteAllRuns(),
 			"Close": () => $(this.dialog).dialog('close')
 		};
 	}
@@ -8991,6 +10075,31 @@ class SystemikaRunsManagerDialog extends jqDialog {
 			} catch (error) { this.status(error.message || String(error), true); }
 		});
 	}
+	async deleteAllRuns() {
+		let runs;
+		try {
+			runs = await systemikaSimulationData.listRuns();
+		} catch (error) {
+			return this.status(error.message || String(error), true);
+		}
+		if (!runs.length) return this.status("No saved runs to delete.");
+		yesNoAlert(`Delete <b>all ${runs.length} saved run${runs.length === 1 ? "" : "s"}</b> for the current model?`, async (answer) => {
+			if (answer !== "yes") return;
+			try {
+				this.status("Deleting all runs…");
+				for (let run of runs) {
+					let name = String(run.runName || "");
+					if (!name) continue;
+					await systemikaSimulationData.deleteRun(name);
+					removeRunFromDisplaySelections(name);
+				}
+				SystemikaOutputDevices.refreshAll();
+				this.selectedRun = "";
+				this.nameInput.val("");
+				await this.reload();
+			} catch (error) { this.status(error.message || String(error), true); }
+		});
+	}
 }
 
 let systemikaRunsManagerDialog = null;
@@ -9057,70 +10166,6 @@ class HtmlComponent {
 	applyChange() { }
 }
 
-
-class PlotPeriodComponent extends HtmlComponent {
-	render() {
-		let auto_plot_per = JSON.parse(this.primitive.getAttribute("AutoPlotPer"));
-		let plot_per = Number(this.primitive.getAttribute("PlotPer"));
-		if (auto_plot_per) {
-			plot_per = this.parent.getDefaultPlotPeriod();
-		}
-		return (`
-			<table class="modern-table zebra" title="Distance between points in time units. \n (Should not be less then Time Step)" >
-				<tr>
-					<th>
-						Plot Period:
-					</th>
-					<td style="padding:1px;">
-						<input style="" class="plot-per-field limit-input enter-apply" type="number" value="${plot_per}" ${auto_plot_per ? "disabled" : ""}/>
-					</td>
-					<td>
-						Auto
-						<input style="" class="plot-per-auto-checkbox limit-input enter-apply" type="checkbox" ${checkedHtml(auto_plot_per)}/>
-					</td>
-				</tr>
-			</table>
-			<div class="plot-per-warning" ></div>
-		`);
-	}
-	checkValidPlotPer() {
-		let plotPerStr = this.find(".plot-per-field").val();
-		let warningDiv = this.find(".plot-per-warning");
-		if (isNaN(plotPerStr) || plotPerStr === "") {
-			warningDiv.html(warningHtml(`Plot Period must be a decimal number`, true));
-			return false;
-		} else if (Number(plotPerStr) <= 0) {
-			warningDiv.html(warningHtml(`Plot Period must be &gt;0`, true));
-			return false;
-		}
-		warningDiv.html("");
-		return true;
-	}
-	bindEvents() {
-		this.find(".plot-per-auto-checkbox").change(event => {
-			let plot_per_field = this.find(".plot-per-field");
-			plot_per_field.prop("disabled", event.target.checked);
-
-			let plot_per = Number(this.primitive.getAttribute("PlotPer"));
-			if (event.target.checked) {
-				plot_per = this.parent.getDefaultPlotPeriod();
-			}
-			plot_per_field.val(plot_per);
-		});
-		this.find(".plot-per-field").keyup(() => {
-			this.checkValidPlotPer();
-		});
-	}
-	applyChange() {
-		if (this.checkValidPlotPer()) {
-			let auto_plot_per = this.find(".plot-per-auto-checkbox").prop("checked");
-			let plot_per = Number(this.find(".plot-per-field").val());
-			this.primitive.setAttribute("AutoPlotPer", auto_plot_per);
-			this.primitive.setAttribute("PlotPer", plot_per);
-		}
-	}
-
-}
 
 /**
  * @param labels = [{ text, attribute }]
@@ -9194,14 +10239,15 @@ class PrimitiveSelectorComponent extends HtmlComponent {
 		return (`<table id=${this.componentId} class="primitive-selector">
 			<tr>
 				<th></th>
-				<th>Added Model Entities</td>
+				<th>Selected Variable(s)</td>
 			</tr>
 			${this.displayIds.map(id => {
 			const primitive = findID(id)
 			const type = getTypeNew(primitive).toLowerCase()
 			const color = primitive?.getAttribute("Color")
 			const isRandom = hasRandomFunction(getValue(primitive))
-			return `<tr>
+			const styleSelected = this.styleComponent && this.styleComponent.selectedId === String(id);
+			return `<tr class="${this.styleComponent ? "plot-style-target-row" : ""} ${styleSelected ? "plot-style-target-selected" : ""}" data-style-id="${id}" ${this.styleComponent ? 'title="Click to edit this entity\'s line style" style="cursor:pointer;"' : ""}>
 					<td style="padding: 0;">
 						<button
 							class="primitive-remove-button enter-apply"
@@ -9231,10 +10277,17 @@ class PrimitiveSelectorComponent extends HtmlComponent {
 		this.find(".included-list-div").html(htmlContent);
 		this.parent.bindEnterApplyEvents();
 		this.find(`#${this.componentId} .primitive-remove-button`).click(event => {
+			event.stopPropagation();
 			this.removeButtonHandler(event);
+			if (this.styleComponent) this.styleComponent.handleDisplayIdsChanged();
 			this.updateIncludedList();
 			this.updateExcludedList();
 		});
+		if (this.styleComponent) {
+			this.find(`#${this.componentId} .plot-style-target-row`).click(event => {
+				this.styleComponent.selectEntity(String($(event.currentTarget).attr("data-style-id") || ""));
+			});
+		}
 	}
 	removeButtonHandler(event) {
 		let removeId = $(event.target).attr("data-id");
@@ -9291,8 +10344,11 @@ class PrimitiveSelectorComponent extends HtmlComponent {
 		this.find(".excluded-list-div").html(htmlContent);
 		this.parent.bindEnterApplyEvents();
 		this.find(".primitive-add-button").click((event) => {
+			let addedId = String($(event.currentTarget).attr("data-id") || "");
 			this.addButtonHandler(event);
+			if (this.styleComponent) this.styleComponent.handleDisplayIdsChanged(addedId);
 			this.updateIncludedList();
+			if (this.styleComponent && addedId) this.styleComponent.selectEntity(addedId);
 			this.find(".primitive-filter-input").val("");
 			this.updateExcludedList();
 		});
@@ -9359,45 +10415,94 @@ class PrimitiveSelectorComponent extends HtmlComponent {
 
 
 class LineOptionsComponent extends HtmlComponent {
+	constructor(parent, selector) {
+		super(parent);
+		this.selector = selector;
+		this.selector.styleComponent = this;
+		this.selectedId = null;
+		this.styles = {};
+	}
+	ensureState(preferredId) {
+		let ids = (this.selector && this.selector.displayIds) ? this.selector.displayIds.map(String) : getDisplayIds(this.primitive).map(String);
+		let preferred = preferredId != null ? String(preferredId) : null;
+		if (preferred && ids.includes(preferred)) this.selectedId = preferred;
+		if (!this.selectedId || !ids.includes(String(this.selectedId))) this.selectedId = ids.length ? ids[0] : null;
+		ids.forEach(id => {
+			if (!this.styles[id]) this.styles[id] = { pattern: [1], width: 2 };
+		});
+	}
+	currentStyle() {
+		if (!this.selectedId) return { pattern: [1], width: 2 };
+		return this.styles[this.selectedId] || { pattern: [1], width: 2 };
+	}
+	patternValue(pattern) {
+		return JSON.stringify(Array.isArray(pattern) && pattern.length ? pattern : [1]);
+	}
 	render() {
-		let options = JSON.parse(this.primitive.getAttribute("LineOptions"));
+		// Reload persisted styles only when the dialog/page itself is rendered.
+		// Switching between entities must keep pending edits in memory until Apply.
+		this.styles = getPlotLineStyles(this.primitive);
+		this.ensureState(this.selectedId);
+		let style = this.currentStyle();
+		let selectedName = this.selectedId && findID(this.selectedId) ? getName(findID(this.selectedId)) : "No model entity selected";
+		let patternValue = this.patternValue(style.pattern);
 		return (`
-			<table class="modern-table zebra">
-				<tr>
-					<th>Type</th><th>Pattern</th><th>Width</th>
-				</tr>
-				${Object.keys(options).map(key => (`<tr>
-					<td>${type_basename[key]}</td>
-					<td>
-						<select data-key="${key}" class="line-pattern-select enter-apply" style="font-family: monospace;">
-						<option value="[1]"		${options[key].pattern[0] === 1 ? "selected" : ""}>&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;</option>
-						<option value="[10, 5]" ${options[key].pattern[0] === 10 ? "selected" : ""}>------</option>
-						</select>
-					</td>
-					<td>
-						<select data-key="${key}" class="line-width-select enter-apply">
-						<option value=1 ${options[key].width === 1 ? "selected" : ""}>1</option>
-						<option value=2 ${options[key].width === 2 ? "selected" : ""}>2</option>
-						<option value=3 ${options[key].width === 3 ? "selected" : ""}>3</option>
-						</select>
-					</td>
-				</tr>`)).join("")}
+			<table class="modern-table zebra systemika-line-style-editor" style="width:100%;">
+				<tr><th colspan="2">Line Style</th></tr>
+				<tr><td><b>Model Entity:</b></td><td class="line-style-entity-name">${htmlEscape(selectedName)}</td></tr>
+				<tr><td><b>Dash Type:</b></td><td>
+					<select class="line-pattern-select enter-apply" ${this.selectedId ? "" : "disabled"}>
+						<option value="[1]" ${patternValue === "[1]" ? "selected" : ""}>Solid</option>
+						<option value="[10,5]" ${patternValue === "[10,5]" ? "selected" : ""}>Dashed</option>
+						<option value="[2,4]" ${patternValue === "[2,4]" ? "selected" : ""}>Dotted</option>
+						<option value="[10,4,2,4]" ${patternValue === "[10,4,2,4]" ? "selected" : ""}>Dash-dot</option>
+					</select>
+				</td></tr>
+				<tr><td><b>Line Width:</b></td><td>
+					<select class="line-width-select enter-apply" ${this.selectedId ? "" : "disabled"}>
+						<option value="1" ${Number(style.width) === 1 ? "selected" : ""}>1</option>
+						<option value="2" ${Number(style.width) === 2 ? "selected" : ""}>2</option>
+						<option value="3" ${Number(style.width) === 3 ? "selected" : ""}>3</option>
+					</select>
+				</td></tr>
 			</table>
+			<div style="font-size:0.9em; margin-top:4px;">Select an item under <b>Selected Variable(s)</b> to edit its style.</div>
 		`);
 	}
-	applyChange() {
-		let options = JSON.parse(this.primitive.getAttribute("LineOptions"));
-
-		let patternOptions = this.find(".line-pattern-select");
-		let widthOptions = this.find(".line-width-select");
-		for (let i = 0; i < widthOptions.length; i++) {
-			let selectedWidth = JSON.parse($(widthOptions[i]).find(" :selected").val());
-			let selectedPattern = JSON.parse($(patternOptions[i]).find(" :selected").val());
-
-			options[$(widthOptions[i]).attr("data-key")]["width"] = selectedWidth;
-			options[$(patternOptions[i]).attr("data-key")]["pattern"] = selectedPattern;
+	captureCurrent() {
+		if (!this.selectedId) return;
+		let patternField = this.find(".line-pattern-select");
+		let widthField = this.find(".line-width-select");
+		if (!patternField.length || !widthField.length) return;
+		let pattern;
+		try { pattern = JSON.parse(String(patternField.val() || "[1]")); } catch (_error) { pattern = [1]; }
+		let width = Number(widthField.val());
+		this.styles[this.selectedId] = { pattern, width: Number.isFinite(width) ? width : 2 };
+	}
+	refreshControls() {
+		let style = this.currentStyle();
+		let primitive = this.selectedId ? findID(this.selectedId) : null;
+		this.find(".line-style-entity-name").text(primitive ? getName(primitive) : "No model entity selected");
+		this.find(".line-pattern-select").val(this.patternValue(style.pattern)).prop("disabled", !this.selectedId);
+		this.find(".line-width-select").val(String(style.width)).prop("disabled", !this.selectedId);
+		if (this.selector) {
+			this.selector.find(".plot-style-target-row").removeClass("plot-style-target-selected").css("background-color", "");
+			if (this.selectedId) this.selector.find(`.plot-style-target-row[data-style-id="${this.selectedId}"]`).addClass("plot-style-target-selected").css("background-color", "#e8eef7");
 		}
-		this.primitive.setAttribute("LineOptions", JSON.stringify(options));
+	}
+	selectEntity(id) {
+		this.captureCurrent();
+		this.ensureState(id);
+		this.refreshControls();
+	}
+	handleDisplayIdsChanged(preferredId) {
+		this.captureCurrent();
+		this.ensureState(preferredId);
+	}
+	bindEvents() { this.refreshControls(); }
+	applyChange() {
+		this.captureCurrent();
+		setPlotLineStyles(this.primitive, this.styles);
 	}
 }
 
@@ -9671,6 +10776,7 @@ class CompareRunsSelectorComponent extends HtmlComponent {
 	constructor(parent, heading = "Runs to compare") {
 		super(parent);
 		this.heading = heading;
+		this.runOrder = [];
 	}
 
 	render() {
@@ -9679,6 +10785,10 @@ class CompareRunsSelectorComponent extends HtmlComponent {
 			<tr><td>
 				<div class="systemika-compare-run-options" style="max-height:180px; overflow-y:auto; border:1px solid #ccc; padding:4px;">
 					Loading runs…
+				</div>
+				<div class="systemika-compare-run-order-wrap" style="margin-top:6px;">
+					<div style="font-weight:bold; margin-bottom:2px;">Display order</div>
+					<div class="systemika-compare-run-order" style="border:1px solid #ccc; padding:3px; min-height:24px;"></div>
 				</div>
 				<div style="display:flex; gap:4px; margin-top:4px; flex-wrap:wrap;">
 					<button type="button" class="systemika-compare-runs-toggle-all" style="min-width:132px;">Select / Deselect All</button>
@@ -9695,6 +10805,51 @@ class CompareRunsSelectorComponent extends HtmlComponent {
 			<input type="checkbox" class="systemika-compare-run-source" value="${htmlEscape(value)}" ${checked ? "checked" : ""} ${unavailable ? "disabled" : ""}/>
 			${htmlEscape(label)}${unavailable ? " (unavailable)" : ""}
 		</label>`;
+	}
+
+	normalizePersistedOrder(selected, currentName = "") {
+		let order = [];
+		for (let raw of (Array.isArray(selected) ? selected : [])) {
+			let name = String(raw == null ? "" : raw).trim();
+			if (!name && currentName) name = currentName;
+			if (name && !order.includes(name)) order.push(name);
+		}
+		this.runOrder = order;
+	}
+
+	syncOrderWithChecked() {
+		let checked = [];
+		this.find(".systemika-compare-run-source:checked").each((index, element) => {
+			let name = String($(element).val() || "").trim();
+			if (name && !checked.includes(name)) checked.push(name);
+		});
+		this.runOrder = this.runOrder.filter(name => checked.includes(name));
+		for (let name of checked) if (!this.runOrder.includes(name)) this.runOrder.push(name);
+		return this.runOrder.slice();
+	}
+
+	renderOrderList() {
+		let target = this.find(".systemika-compare-run-order");
+		if (!target.length) return;
+		let names = this.syncOrderWithChecked();
+		if (!names.length) {
+			target.html(`<span style="opacity:0.7;">No selected runs.</span>`);
+			return;
+		}
+		target.html(names.map((name, index) => `<div class="systemika-compare-run-order-row" data-run="${htmlEscape(name)}" style="display:flex; align-items:center; gap:4px; padding:1px 0;">
+			<span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${index + 1}. ${htmlEscape(name)}</span>
+			<button type="button" class="systemika-run-order-up" data-index="${index}" title="Move run up" ${index === 0 ? "disabled" : ""}>↑</button>
+			<button type="button" class="systemika-run-order-down" data-index="${index}" title="Move run down" ${index === names.length - 1 ? "disabled" : ""}>↓</button>
+		</div>`).join(""));
+	}
+
+	moveRun(index, delta) {
+		this.syncOrderWithChecked();
+		let target = index + delta;
+		if (index < 0 || target < 0 || index >= this.runOrder.length || target >= this.runOrder.length) return;
+		[this.runOrder[index], this.runOrder[target]] = [this.runOrder[target], this.runOrder[index]];
+		this.renderOrderList();
+		this.applySelection();
 	}
 
 	updateToggleAllLabel() {
@@ -9714,6 +10869,7 @@ class CompareRunsSelectorComponent extends HtmlComponent {
 		let status = this.find(".systemika-compare-runs-status");
 		let selected = getCompareRunNames(this.primitive);
 		let currentName = hasCurrentRunSource() ? getCurrentRunSourceName() : "";
+		this.normalizePersistedOrder(selected, currentName);
 		let currentChecked = Boolean(currentName) && (selected.includes("") || selected.includes(currentName));
 		let html = currentName
 			? this.optionHtml(currentName, currentName, currentChecked)
@@ -9725,6 +10881,7 @@ class CompareRunsSelectorComponent extends HtmlComponent {
 			}
 			options.html(html || `<div style="padding:2px 0;">No run data available.</div>`);
 			this.updateToggleAllLabel();
+			this.renderOrderList();
 			let supportedWebStore = window.systemikaBrowserRuns
 				&& (!window.systemikaBrowserRuns.isSupported || window.systemikaBrowserRuns.isSupported());
 			let fallbackStatus = "Only the current in-memory run is available in Browser Storage Mode. Full run comparison requires project-folder access.";
@@ -9757,23 +10914,21 @@ class CompareRunsSelectorComponent extends HtmlComponent {
 			}
 			// Missing saved runs were pruned from the selection above.
 			options.html(html || `<div style="padding:2px 0;">No saved runs yet.</div>`);
+			this.normalizePersistedOrder(selected, currentName);
 			this.updateToggleAllLabel();
+			this.renderOrderList();
 			this.updateStatus();
 		} catch (error) {
 			console.error(error);
 			options.html(html || `<div style="padding:2px 0;">No run data available.</div>`);
 			this.updateToggleAllLabel();
+			this.renderOrderList();
 			status.text(`Unable to list saved runs: ${error.message || error}`);
 		}
 	}
 
 	selectedFromUi() {
-		let names = [];
-		this.find(".systemika-compare-run-source:checked").each((index, element) => {
-			let name = String($(element).val() || "");
-			if (name && !names.includes(name)) names.push(name);
-		});
-		return names;
+		return this.syncOrderWithChecked();
 	}
 
 	updateStatus() {
@@ -9816,6 +10971,7 @@ class CompareRunsSelectorComponent extends HtmlComponent {
 		}
 		this.find(".systemika-compare-run-options").on("change", ".systemika-compare-run-source", () => {
 			this.updateToggleAllLabel();
+			this.renderOrderList();
 			this.applySelection();
 		});
 		this.find(".systemika-compare-runs-toggle-all").click((event) => {
@@ -9824,7 +10980,14 @@ class CompareRunsSelectorComponent extends HtmlComponent {
 			let shouldSelect = boxes.length > 0 && boxes.filter(":checked").length !== boxes.length;
 			boxes.prop("checked", shouldSelect);
 			this.updateToggleAllLabel();
+			this.renderOrderList();
 			this.applySelection();
+		});
+		this.find(".systemika-compare-run-order").on("click", ".systemika-run-order-up, .systemika-run-order-down", (event) => {
+			event.preventDefault();
+			let button = $(event.currentTarget);
+			let index = Number(button.attr("data-index"));
+			this.moveRun(index, button.hasClass("systemika-run-order-up") ? -1 : 1);
 		});
 		this.find(".systemika-compare-runs-refresh").click((event) => {
 			event.preventDefault();
@@ -9975,6 +11138,8 @@ class RunSelectorComponent extends HtmlComponent {
 class DisplayDialog extends jqDialog {
 	constructor(id) {
 		super();
+		this._dialogOwnedContent = this.dialogContent;
+		this._dockMounted = false;
 		this.primitive = findID(id);
 		this.displayIdList = [];
 		this.subscribePool = new SubscribePool();
@@ -10058,11 +11223,46 @@ class DisplayDialog extends jqDialog {
 		this.clearRemovedIds();
 		return this.displayIdList;
 	}
+	mountInDock(container) {
+		if (!container) return;
+		this.dialogContent = container;
+		this._dockMounted = true;
+		this.beforeShow();
+		let footer = document.createElement("div");
+		footer.className = "systemika-dock-settings-footer";
+		footer.innerHTML = `<button type="button" class="systemika-dock-apply">Apply</button>`;
+		container.appendChild(footer);
+		$(footer).find(".systemika-dock-apply").click(event => {
+			event.preventDefault();
+			let result = this.makeApply();
+			if (result === false) return;
+			if (window.SystemikaPlotPages && SystemikaPlotPages.isPagedPrimitive(this.primitive)) SystemikaPlotPages.persistCurrentPage(this.primitive);
+			this.subscribePool.publish("dock apply");
+			History.storeUndoState();
+			InfoBar.update();
+		});
+	}
+	unmountFromDock() {
+		if (!this._dockMounted) return;
+		this._dockMounted = false;
+		this.dialogContent = this._dialogOwnedContent;
+	}
+	show() {
+		let visual = connection_array[String(getID(this.primitive))];
+		if (window.SystemikaOutputDock && visual && SystemikaOutputDock.isOutputVisual(visual)) {
+			SystemikaOutputDock.activateVisual(visual);
+			return;
+		}
+		super.show();
+	}
 	afterClose() {
 		this.subscribePool.publish("window closed");
 	}
 	makeApply() {
 		this.components.forEach(column => column.forEach(component => component.applyChange()));
+		if (window.SystemikaPlotPages && SystemikaPlotPages.isPagedPrimitive(this.primitive)) {
+			SystemikaPlotPages.persistCurrentPage(this.primitive);
+		}
 	}
 	beforeShow() {
 		this.setHtml(`<div class="table">
@@ -10076,6 +11276,7 @@ class DisplayDialog extends jqDialog {
 		this.bindEnterApplyEvents();
 	}
 }
+
 /**
  * @param axisOptions [{text, key, isTimeAxis}]
  */
@@ -10175,7 +11376,7 @@ class TimePlotSelectorComponent extends PrimitiveSelectorComponent {
 	renderIncludedList() {
 		return (`<table id="${this.componentId}" class="primitive-selector">
 			<tr>
-				${["", "Added Model Entities", "Left", "Right"].map(title => `<th>${title}</th>`).join("")}
+				${["", "Selected Variable(s)", "Left", "Right"].map(title => `<th>${title}</th>`).join("")}
 			</tr>
 			${this.displayIds.map((id, index) => {
 			const selectedSide = this.sides[index];
@@ -10183,7 +11384,8 @@ class TimePlotSelectorComponent extends PrimitiveSelectorComponent {
 			const type = getTypeNew(primitive);
 			const color = primitive?.getAttribute("Color")
 			const isRandom = hasRandomFunction(getValue(primitive));
-			return (`<tr>
+			const styleSelected = this.styleComponent && this.styleComponent.selectedId === String(id);
+			return (`<tr class="${this.styleComponent ? "plot-style-target-row" : ""} ${styleSelected ? "plot-style-target-selected" : ""}" data-style-id="${id}" ${this.styleComponent ? 'title="Click to edit this entity\'s line style" style="cursor:pointer;"' : ""}>
 					<td style="padding: 0;">
 						<button
 							class="primitive-remove-button enter-apply"
@@ -10252,14 +11454,30 @@ class TimePlotSelectorComponent extends PrimitiveSelectorComponent {
 	}
 }
 
+
+class GraphExportComponent extends HtmlComponent {
+	render() {
+		return (`<table class="modern-table zebra" style="width:100%;"><tr><th colspan="2">Export Graph</th></tr><tr>
+			<td style="text-align:center;"><button type="button" class="graph-export-svg">Export SVG</button></td>
+			<td style="text-align:center;"><button type="button" class="graph-export-png">Export PNG</button></td>
+		</tr><tr><td colspan="2" style="font-size:0.85em;">Exports the currently rendered graph with a transparent background.</td></tr></table>`);
+	}
+	visual() { return connection_array[getID(this.primitive)] || null; }
+	bindEvents() {
+		this.find(".graph-export-svg").click(event => { event.preventDefault(); exportGraphVisual(this.visual(), "svg"); });
+		this.find(".graph-export-png").click(event => { event.preventDefault(); exportGraphVisual(this.visual(), "png"); });
+	}
+}
+
 class TimePlotDialog extends DisplayDialog {
 	constructor(id) {
 		super(id);
 		this.setTitle("Time Plot Properties");
+		let entitySelector = new TimePlotSelectorComponent(this);
+		let lineStyleEditor = new LineOptionsComponent(this, entitySelector);
 		this.components = [
-			[new RunSelectorComponent(this), new TimePlotSelectorComponent(this)],
+			[new RunSelectorComponent(this), entitySelector],
 			[
-				new PlotPeriodComponent(this),
 				new AxisLimitsComponent(this, [
 					{ text: "Time", key: "timeaxis", isTimeAxis: true },
 					{ text: "Left", key: "leftaxis" },
@@ -10270,12 +11488,13 @@ class TimePlotDialog extends DisplayDialog {
 					{ text: "Left", attribute: "LeftAxisLabel" },
 					{ text: "Right", attribute: "RightAxisLabel" }
 				]),
-				new LineOptionsComponent(this),
+				lineStyleEditor,
 				new CheckboxTableComponent(this, [
 					{ text: "Numbered Lines", attribute: "HasNumberedLines" },
 					{ text: "Colour from Model Entity", attribute: "ColorFromPrimitive" },
 					{ text: "Show Data when hovering", attribute: "ShowHighlighter" },
-				])
+				]),
+				new GraphExportComponent(this)
 			]
 		];
 	}
@@ -10364,10 +11583,11 @@ class ComparePlotDialog extends DisplayDialog {
 		super(id);
 		this.setTitle("Time Plot Properties");
 
+		let entitySelector = new PrimitiveSelectorComponent(this);
+		let lineStyleEditor = new LineOptionsComponent(this, entitySelector);
 		this.components = [
-			[new CompareRunsSelectorComponent(this), new PrimitiveSelectorComponent(this)],
+			[new CompareRunsSelectorComponent(this), entitySelector],
 			[
-				new PlotPeriodComponent(this),
 				new AxisLimitsComponent(this, [
 					{ text: "Time", key: "timeaxis", isTimeAxis: true },
 					{ text: "Y-Axis", key: "yaxis" }
@@ -10376,12 +11596,13 @@ class ComparePlotDialog extends DisplayDialog {
 					{ text: "Title", attribute: "TitleLabel" },
 					{ text: "Y-Axis Label", attribute: "LeftAxisLabel" }
 				]),
-				new LineOptionsComponent(this),
+				lineStyleEditor,
 				new CheckboxTableComponent(this, [
 					{ text: "Numbered Lines", attribute: "HasNumberedLines" },
 					{ text: "Colour from Model Entity", attribute: "ColorFromPrimitive" },
 					{ text: "Show Data when hovering", attribute: "ShowHighlighter" },
-				])
+				]),
+				new GraphExportComponent(this)
 			]
 		];
 	}
@@ -10452,36 +11673,6 @@ class HistogramOptionsComponent extends HtmlComponent {
 	}
 }
 
-class RadioCompontent extends HtmlComponent {
-	/**
-	 * @param {{header: string, name: string, attribute, options: [{value: string, label: string}]}} data
-	 */
-	constructor(parent, data) {
-		super(parent);
-		this.data = data;
-	}
-	render() {
-		return (`<table class="modern-table zebra">
-			<tr><th colspan="2" >${this.data.header}</th></tr>
-			${this.data.options.map(option => {
-			let checkString = checkedHtml(this.primitive.getAttribute(this.data.attribute) === option.value);
-			return (`<tr>
-					<td>
-						<input type="radio" id="${option.value}" class="enter-apply" name="${this.data.name}" value="${option.value}" ${checkString} >
-					</td>
-					<td>
-						<label for="${option.value}" >${option.label}</label>
-					</td>
-				</tr>`);
-		}).join("")}
-		</table>`);
-	}
-	applyChange() {
-		let value = this.find(`input[name="${this.data.name}"]:checked`).val();
-		this.primitive.setAttribute(this.data.attribute, value);
-	}
-}
-
 class HistoPlotDialog extends DisplayDialog {
 	constructor(id) {
 		super(id);
@@ -10492,15 +11683,7 @@ class HistoPlotDialog extends DisplayDialog {
 			[new CompareRunsSelectorComponent(this), new PrimitiveSelectorComponent(this, 1)],
 			[
 				new HistogramOptionsComponent(this),
-				new RadioCompontent(this, {
-					header: "Select Scaling Type",
-					name: "scaling",
-					attribute: "ScaleType",
-					options: [
-						{ value: "Histogram", label: "Histogram" },
-						{ value: "PDF", label: "Probability Density Function" }
-					]
-				})
+				new GraphExportComponent(this)
 			]
 		];
 	}
@@ -10512,7 +11695,7 @@ class XySelectorComponent extends PrimitiveSelectorComponent {
 		return (`<table id="${this.componentId}" class="primitive-selector">
 				<tr>
 					<th></th>
-					<th>Added Model Entities</td>
+					<th>Selected Variable(s)</td>
 					<th>Axis</th>
 				</tr>
 				${this.displayIds.map((id, index) => {
@@ -10553,28 +11736,19 @@ class XyPlotDialog extends DisplayDialog {
 		this.components = [
 			[new CompareRunsSelectorComponent(this), new XySelectorComponent(this, 2)],
 			[
-				new PlotPeriodComponent(this),
 				new AxisLimitsComponent(this, [
 					{ text: "X-Axis", key: "xaxis" },
 					{ text: "Y-Axis", key: "yaxis" }
 				]),
 				new CheckboxTableComponent(this, [
 					{ text: "Show Line", attribute: "ShowLine" },
-					{ text: "Show Markers", attribute: "ShowMarker" },
+					{ text: "Show Number", attribute: "ShowNumber" },
 					{ text: "Mark Start (🔴)", attribute: "MarkStart" },
 					{ text: "Mark End (🟩)", attribute: "MarkEnd" },
 					{ text: "Show Data when hovering", attribute: "ShowHighlighter" }
 				]),
 				new LabelTableComponent(this, [{ text: "Title", attribute: "TitleLabel" }]),
-				new RadioCompontent(this, {
-					header: "Line Width",
-					name: "line-width",
-					attribute: "LineWidth",
-					options: [
-						{ value: "1", label: "Thin" },
-						{ value: "2", label: "Thick" }
-					]
-				})
+				new GraphExportComponent(this)
 			]
 		];
 	}
@@ -10583,6 +11757,150 @@ class XyPlotDialog extends DisplayDialog {
 			.map(name => Number(RunResults.getTimeStep(name)))
 			.filter(value => Number.isFinite(value) && value > 0);
 		return steps.length ? Math.min(...steps) : super.getDefaultPlotPeriod();
+	}
+}
+
+const SYSTEMIKA_TABLE_DEFAULT_DECIMALS = 2;
+const SYSTEMIKA_TABLE_MAX_DECIMALS = 12;
+
+function normalizeTableDecimal(value, fallback = SYSTEMIKA_TABLE_DEFAULT_DECIMALS) {
+	let number = Number(value);
+	if (!Number.isInteger(number) || number < 0 || number > SYSTEMIKA_TABLE_MAX_DECIMALS) return fallback;
+	return number;
+}
+
+function getLegacyTableDecimal(primitive) {
+	try {
+		let numberLength = JSON.parse(primitive.getAttribute("NumberLength") || "{}");
+		return normalizeTableDecimal(numberLength.decimal, SYSTEMIKA_TABLE_DEFAULT_DECIMALS);
+	} catch (error) {
+		return SYSTEMIKA_TABLE_DEFAULT_DECIMALS;
+	}
+}
+
+function getTableDecimals(primitive) {
+	let result = {};
+	try {
+		let parsed = JSON.parse(primitive.getAttribute("TableDecimals") || "{}");
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+			for (let [id, value] of Object.entries(parsed)) {
+				let number = Number(value);
+				if (Number.isInteger(number) && number >= 0 && number <= SYSTEMIKA_TABLE_MAX_DECIMALS) result[String(id)] = number;
+			}
+		}
+	} catch (error) {
+		console.warn("Invalid TableDecimals attribute", error);
+	}
+	return result;
+}
+
+function getTableDecimalForId(primitive, id, settings = null) {
+	let decimals = settings || getTableDecimals(primitive);
+	let key = String(id);
+	if (Object.prototype.hasOwnProperty.call(decimals, key)) return normalizeTableDecimal(decimals[key]);
+	return getLegacyTableDecimal(primitive);
+}
+
+class TableSelectorComponent extends PrimitiveSelectorComponent {
+	constructor(parent) {
+		super(parent);
+		this.decimals = {};
+	}
+	ensureDecimal(id) {
+		let key = String(id);
+		if (!Object.prototype.hasOwnProperty.call(this.decimals, key)) {
+			this.decimals[key] = getTableDecimalForId(this.primitive, key, this.decimals);
+		}
+		return this.decimals[key];
+	}
+	renderIncludedList() {
+		return (`<table id="${this.componentId}" class="primitive-selector">
+			<tr>
+				<th></th>
+				<th>Selected Variable(s)</th>
+				<th>Decimal</th>
+			</tr>
+			${this.displayIds.map(id => {
+				const primitive = findID(id);
+				const type = getTypeNew(primitive).toLowerCase();
+				const color = primitive?.getAttribute("Color");
+				const isRandom = hasRandomFunction(getValue(primitive));
+				const decimal = this.ensureDecimal(id);
+				return `<tr>
+					<td style="padding:0;">
+						<button class="primitive-remove-button enter-apply" data-id="${id}">-</button>
+					</td>
+					<td style="width:100%;">
+						<div class="center-vertically-container">
+							<div style="width:1.75rem; padding-right:0.25rem;">
+								${PrimitiveSvgPreview.create(type, { color, dice: isRandom })}
+							</div>
+							<span class="cm-primitive cm-${color}">${getName(primitive)}</span>
+						</div>
+					</td>
+					<td style="padding:1px; text-align:center;">
+						<input type="number" class="table-decimal-field enter-apply" data-id="${id}" min="0" max="${SYSTEMIKA_TABLE_MAX_DECIMALS}" step="1" value="${decimal}" style="width:58px; text-align:center;" />
+					</td>
+				</tr>`;
+			}).join("")}
+		</table><div class="table-decimal-warning warning" style="min-height:1.2em;"></div>`);
+	}
+	updateIncludedList() {
+		super.updateIncludedList();
+		this.find(".table-decimal-field").on("input change", event => {
+			let field = $(event.currentTarget);
+			let id = String(field.attr("data-id") || "");
+			let raw = String(field.val() ?? "").trim();
+			let number = Number(raw);
+			if (raw === "" || !Number.isInteger(number) || number < 0 || number > SYSTEMIKA_TABLE_MAX_DECIMALS) {
+				this.find(".table-decimal-warning").html(warningHtml(`Decimal must be an integer from 0 to ${SYSTEMIKA_TABLE_MAX_DECIMALS}.`, true));
+				return;
+			}
+			this.decimals[id] = number;
+			this.find(".table-decimal-warning").html("");
+		});
+	}
+	syncLiveSelection() {
+		// The docked Table is a live output: adding/removing a variable should be
+		// visible immediately rather than requiring a separate Apply click.
+		setDisplayIds(this.primitive, this.displayIds);
+		let active = new Set(this.displayIds.map(String));
+		let persisted = {};
+		for (let id of active) persisted[id] = this.ensureDecimal(id);
+		this.primitive.setAttribute("TableDecimals", JSON.stringify(persisted));
+		let visual = connection_array[String(getID(this.primitive))];
+		if (visual && typeof visual.render === "function") visual.render();
+		History.storeUndoState();
+	}
+	removeButtonHandler(event) {
+		let removeId = String($(event.target).attr("data-id") || "");
+		super.removeButtonHandler(event);
+		delete this.decimals[removeId];
+		this.syncLiveSelection();
+	}
+	addButtonHandler(event) {
+		super.addButtonHandler(event);
+		let addId = String($(event.target).attr("data-id") || "");
+		if (addId) this.decimals[addId] = getLegacyTableDecimal(this.primitive);
+		this.syncLiveSelection();
+	}
+	render() {
+		this.decimals = getTableDecimals(this.primitive);
+		return super.render();
+	}
+	applyChange() {
+		for (let field of this.find(".table-decimal-field").toArray()) {
+			let jqField = $(field);
+			let id = String(jqField.attr("data-id") || "");
+			let value = Number(jqField.val());
+			if (Number.isInteger(value) && value >= 0 && value <= SYSTEMIKA_TABLE_MAX_DECIMALS) this.decimals[id] = value;
+			else this.decimals[id] = getTableDecimalForId(this.primitive, id, this.decimals);
+		}
+		let active = new Set(this.displayIds.map(String));
+		let persisted = {};
+		for (let id of active) persisted[id] = getTableDecimalForId(this.primitive, id, this.decimals);
+		this.primitive.setAttribute("TableDecimals", JSON.stringify(persisted));
+		setDisplayIds(this.primitive, this.displayIds);
 	}
 }
 
@@ -10923,10 +12241,9 @@ class TableDialog extends DisplayDialog {
 		this.setTitle("Table Properties");
 
 		this.components = [
-			[new CompareRunsSelectorComponent(this, "Runs to include"), new PrimitiveSelectorComponent(this)],
+			[new CompareRunsSelectorComponent(this, "Runs to include"), new TableSelectorComponent(this)],
 			[
 				new TableLimitsComponent(this),
-				new ArithmeticPrecisionComponent(this),
 				new RoundToZeroComponent(this),
 				new ExportDataComponent(this)
 			]
@@ -11458,7 +12775,9 @@ class ConverterDialog extends jqDialog {
 						<div style="display: flex; justify-content: space-between; width: 100%; align-items: baseline;">
 							<b>Definition:</b><span>${this.renderHelpButtonHtml("converter-help")}</span>
 						</div>
-						<textarea class="value-field" style="width: 300px; height: 200px;"></textarea>
+						<textarea class="value-field" style="width: 300px; height: 200px;"></textarea><br/><br/>
+						<b>Comment:</b><br/>
+						<textarea class="comment-field" rows="3" style="width:300px; box-sizing:border-box; resize:vertical;" placeholder="Optional documentation comment"></textarea>
 						<p class="in-link" style="font-weight:bold; margin:5px 0px">Ingoing Link </p>
 					</div>
 					<div id="converter-plot-div" style="">
@@ -11490,7 +12809,7 @@ class ConverterDialog extends jqDialog {
 				<li>${keyHtml(["Shift", "Enter"])} &rarr; Adds new line</li>
 				<li>${keyHtml([modifierKey, "v"])} &rarr; Paste (you can paste two columns from spreadsheet program)</li>
 			</ul>
-			${noteHtml("Comments are not allowed in the lookup.")}
+			${noteHtml("Use the separate Comment field for documentation notes. The lookup definition itself should contain only lookup data.")}
 		</div>
 		`)
 
@@ -11508,6 +12827,9 @@ class ConverterDialog extends jqDialog {
 					},
 					"Enter": () => {
 						this.dialogParameters.buttons["Apply"]();
+					},
+					"Tab": () => {
+						if (this.commentField) this.commentField.focus();
 					},
 					"Shift-Tab": () => {
 						this.nameField.focus();
@@ -11544,9 +12866,19 @@ class ConverterDialog extends jqDialog {
 			}
 		})
 		this.nameField = $(this.dialogContent).find(".name-field").get(0);
+		this.commentField = $(this.dialogContent).find(".comment-field").get(0);
 		$(this.nameField).keydown((event) => {
-			if (event.key == "Enter") {
+			if (event.key === "Tab" && !event.shiftKey) {
+				event.preventDefault();
+				this.cmValueField.focus();
+			} else if (event.key == "Enter") {
 				this.applyChanges();
+			}
+		});
+		$(this.commentField).keydown((event) => {
+			if (event.key === "Tab" && event.shiftKey) {
+				event.preventDefault();
+				this.cmValueField.focus();
 			}
 		});
 	}
@@ -11586,6 +12918,7 @@ class ConverterDialog extends jqDialog {
 		this.setTitle(`${oldNameBrackets} properties`);
 
 		$(this.nameField).val(oldNameBrackets);
+		$(this.commentField).val(this.primitive.getAttribute("Note") || "");
 		this.cmValueField.setValue(oldValue);
 
 		if (this.defaultFocusSelector) {
@@ -11682,6 +13015,7 @@ class ConverterDialog extends jqDialog {
 			// Handle value
 			let value = this.cmValueField.getValue();
 			setValue2(this.primitive, value);
+			this.primitive.setAttribute("Note", this.commentField ? this.commentField.value : "");
 
 			// handle name
 			let oldName = getName(this.primitive);
@@ -11765,7 +13099,7 @@ class GettingStartedDialog extends CloseDialog {
 				<li><b>Build the structure.</b> Add Stocks, Flows, Links, Auxiliaries, Constants, Lookups, and Ghosts from the vertical toolbar.</li>
 				<li><b>Enter definitions and units.</b> Double-click a model entity to edit its equation/value and declared unit. Links may also carry +/− polarity annotations.</li>
 				<li><b>Check units.</b> Use <b>Check Units → Report</b>. Systemika reports inconsistencies but never changes, converts, or suggests units.</li>
-				<li><b>Add outputs.</b> Use Number Box, Table, Time Plot, XY Plot, or Histogram from the top toolbar.</li>
+				<li><b>Inspect outputs.</b> The right-hand Output panel shows model equations by default. Use Table, Time Plot, XY Plot, or Histogram in the top toolbar to switch the panel to that output; its settings appear below the output.</li>
 				<li><b>Run or explore.</b> <b>Run/Pause</b> performs a normal simulation. <b>Advance</b> steps through the model and allows permitted parameter changes between advances.</li>
 				<li><b>Save the model.</b> Use Save or Save As. The red <b>Unsaved Changes</b> indicator is also clickable.</li>
 			</ol>
@@ -11786,7 +13120,7 @@ class KeyboardShortcutsDialog extends CloseDialog {
 		<tr><td>Save</td><td>${modifierKey}+S</td></tr>
 		<tr><td>Save As</td><td>${modifierKey}+Shift+S</td></tr>
 		<tr><td>Undo / Redo</td><td>${modifierKey}+Z / ${modifierKey}+Y</td></tr>
-		<tr><td>Cut / Copy / Paste</td><td>${modifierKey}+X / ${modifierKey}+C / ${modifierKey}+V</td></tr>
+		<tr><td>Cut / Copy / Paste</td><td>${modifierKey}+X / ${modifierKey}+C / ${modifierKey}+V<br/><small>Copy/Cut of one selected Figure also copies its image to the system clipboard.</small></td></tr>
 		<tr><td>Select all</td><td>${modifierKey}+A</td></tr>
 		<tr><td>Delete selection</td><td>Delete</td></tr>
 		<tr><td>Zoom in / out</td><td>${modifierKey}++ / ${modifierKey}+-</td></tr>
@@ -11799,12 +13133,12 @@ class KeyboardShortcutsDialog extends CloseDialog {
 		<tr><td>Link Properties (one Link selected)</td><td>L</td></tr>
 		<tr><td>Lookup / Ghost</td><td>K / G</td></tr>
 		<tr><td>Hide / unhide definition question marks</td><td>Q</td></tr>
-		<tr><td>Number Box / Table</td><td>N / T</td></tr>
+		<tr><td>Table</td><td>T</td></tr>
 		<tr><td>Time Plot / XY Plot / Histogram</td><td>P / X / H</td></tr>
 		<tr><td>Rotate entity name</td><td>R</td></tr>
 		<tr><td>Apply multiline equation</td><td>${modifierKey}+Enter</td></tr>
 		</table>
-		<p style="color:#555">Single-letter shortcuts apply when focus is on the model canvas, not while typing in a field or dialog.</p>
+		<p style="color:#555">Single-letter shortcuts apply when focus is on the model canvas, not while typing in a field or dialog. In the toolbar Run Name field, Enter or the Run/Pause shortcut starts the model without moving focus.</p>
 		</div>`);
 	}
 }
@@ -12255,11 +13589,10 @@ class Autocomplete {
 		let end = cursor.ch
 		while (start && /\w/.test(line.charAt(start - 1))) --start
 		while (end < line.length && /\w/.test(line.charAt(end))) ++end
-		const prevStr = line.substring(0, cursor.ch)
 		return {
 			list: [
 				...this.getPrimitiveNames(line, cursor, prim),
-				...((/\[\w*$/gi).test(prevStr) ? [] : this.getFunctions(line, cursor)),
+				...this.getFunctions(line, cursor),
 			],
 			from: { line: cursor.line, ch: start },
 			to: { line: cursor.line, ch: end },
@@ -12297,14 +13630,13 @@ class Autocomplete {
 		while (start && /\w/.test(line.charAt(start - 1))) --start
 		while (end < line.length && /\w/.test(line.charAt(end))) ++end
 		let word = line.substring(start, end)
-		if ((/\[/gi).test(line.charAt(start - 1))) --start;
 		const linkedPrims = getLinkedPrimitives(prim)
 		return linkedPrims.filter(prim => getName(prim).toLowerCase().startsWith(word.toLowerCase())).map(prim => {
 			const name = getName(prim)
 			return {
 				className: "cm-primitive",
-				displayText: `[${name}]`,
-				text: `[${name}]`,
+				displayText: name,
+				text: name,
 				note: "model entity",
 				from: { line: 0, ch: start },
 				to: { line: 0, ch: end },
@@ -12355,7 +13687,9 @@ class DefinitionEditor extends jqDialog {
 							<textarea class="value-field enter-apply" cols="30" rows="30"></textarea>
 							<div class="function-helper" style="width: 100%; margin: 0.4em 0.2em;" ></div>
 							<b>Unit:</b><br/>
-							<input id="unit-field" class="enter-apply cm-primitive" style="width: 100%;" type="text" value=""><br/>
+							<input id="unit-field" class="enter-apply cm-primitive" style="width: 100%;" type="text" value=""><br/><br/>
+							<b>Comment:</b><br/>
+							<textarea class="comment-field" rows="3" style="width:100%; box-sizing:border-box; resize:vertical;" placeholder="Optional documentation comment"></textarea><br/>
 							<div class="primitive-references-div" style="width: 100%; overflow-x: auto" ><!-- References go here-->
 							</div>
 						</div>
@@ -12388,8 +13722,11 @@ class DefinitionEditor extends jqDialog {
 					"Cmd-Enter": () => {
 						this.dialogParameters.buttons["Apply"]();
 					},
+					"Tab": () => {
+						if (this.unitField) this.unitField.focus();
+					},
 					"Shift-Tab": () => {
-						this.nameField.focus();
+						if (this.nameField) this.nameField.focus();
 					},
 					"Ctrl-Space": "autocomplete"
 				},
@@ -12450,7 +13787,33 @@ class DefinitionEditor extends jqDialog {
 		this.valueField = $(this.dialogContent).find(".value-field").get(0);
 		this.nameField = $(this.dialogContent).find(".name-field").get(0);
     this.unitField = $(this.dialogContent).find("#unit-field").get(0);
+		this.commentField = $(this.dialogContent).find(".comment-field").get(0);
 		this.referenceDiv = $(this.dialogContent).find(".primitive-references-div").get(0);
+
+		// Tab follows the visible field order: Name -> Definition -> Unit.
+		// CodeMirror normally uses Tab for indentation; equation editing should instead
+		// behave like a properties form. New lines remain available with Enter.
+		$(this.nameField).keydown((event) => {
+			if (event.key === "Tab" && !event.shiftKey) {
+				event.preventDefault();
+				this.cmValueField.focus();
+			}
+		});
+		$(this.unitField).keydown((event) => {
+			if (event.key === "Tab" && event.shiftKey) {
+				event.preventDefault();
+				this.cmValueField.focus();
+			} else if (event.key === "Tab" && !event.shiftKey && this.commentField) {
+				event.preventDefault();
+				this.commentField.focus();
+			}
+		});
+		$(this.commentField).keydown((event) => {
+			if (event.key === "Tab" && event.shiftKey) {
+				event.preventDefault();
+				this.unitField.focus();
+			}
+		});
 
 		/** @param {import("./functionCategories").FunctionDetails[]} functionList */
 		let functionListToHtml = function (functionList) {
@@ -12545,6 +13908,7 @@ class DefinitionEditor extends jqDialog {
 
 		$(this.nameField).val(oldNameBrackets);
 		$(this.unitField).val(oldUnits);
+		$(this.commentField).val(this.primitive.getAttribute("Note") || "");
 		this.cmValueField.setValue(oldValue);
 
 		// Create reference list
@@ -12563,7 +13927,7 @@ class DefinitionEditor extends jqDialog {
 			let result = "";
 			for (let linked of referenceList) {
 				const color = linked.getAttribute("Color");
-				let name = "[" + getName(linked) + "]";
+				let name = getName(linked);
 				result += `<span class = "linked-reference click-function cm-primitive ${color ? "cm-" + color : ""}" data-template="${name}">${name}</span>&nbsp;</br>`;
 			}
 			return result;
@@ -12610,6 +13974,7 @@ class DefinitionEditor extends jqDialog {
 			<ul style="margin: 0.5em 0; padding-left: 2em;">
 				<li>${keyHtml("Esc")} &rarr; Cancel changes</li>
 				<li>${keyHtml("Enter")} &rarr; Add new line</li>
+				<li>${keyHtml("Tab")} &rarr; Move to the next field</li>
 				<li>${keyHtml([modifierKey, "Enter"])} &rarr; Apply changes</li>
 				<li>
 				${keyHtml(["Ctrl", "Space"])} &rarr; Show autocomplete definition
@@ -12622,8 +13987,7 @@ class DefinitionEditor extends jqDialog {
 				</li>
 			</ul>
 			<b>Tip:</b><br/>
-			<p style="margin: 0.5em 0;"> With a "#" after the definition you may add a comment.
-			</p>
+			<p style="margin: 0.5em 0;">Use the separate <b>Comment</b> field for model-documentation notes. Comments do not affect simulation equations.</p>
 		</div>`);
 	}
 	templateClick(event) {
@@ -12631,10 +13995,8 @@ class DefinitionEditor extends jqDialog {
 		let start = this.cmValueField.getCursor("start");
 		let end = this.cmValueField.getCursor("end");
 
-		if (typeof templateData == "object") {
-			templateData = "[" + templateData.toString() + "]";
-		}
-		this.cmValueField.replaceRange(templateData, start, end);
+		if (typeof templateData == "object") templateData = templateData.toString();
+		this.cmValueField.replaceRange(String(templateData), start, end);
 		this.cmValueField.focus();
 	}
 	beforeClose() {
@@ -12668,6 +14030,7 @@ class DefinitionEditor extends jqDialog {
 		if (this.primitive) {
 			let value = this.cmValueField.getValue();
 			const unit = this.unitField.value.trim();
+			const comment = this.commentField ? this.commentField.value : "";
 			let oldName = getName(this.primitive);
 			let newName = stripBrackets($(this.dialogContent).find(".name-field").val());
 
@@ -12699,6 +14062,8 @@ class DefinitionEditor extends jqDialog {
 				}
 			}
 
+			this.primitive.setAttribute("Note", comment);
+
 			let visualObject = object_array[this.primitive.id];
 			if (visualObject) {
 				visualObject.update();
@@ -12710,10 +14075,10 @@ class DefinitionEditor extends jqDialog {
 		}
 	}
 }
-/** @param {string} htmlContent */
-function printContentInNewWindow(htmlContent) {
+/** @param {string} htmlContent @param {string} title */
+function printContentInNewWindow(htmlContent, title = "Systemika Studio") {
 	const printWindow = window.open('', '', 'height=1000,width=1000,screenX=50,screenY=50');
-	printWindow.document.title = "Equation List";
+	printWindow.document.title = title;
 	const link = document.createElement("link");
 	link.rel = "stylesheet";
 	link.type = "text/css";
@@ -12803,7 +14168,7 @@ class UnitCheckDialog extends jqDialog {
 	beforeCreateDialog() {
 		this.dialogParameters.buttons = {
 			"Close": () => { $(this.dialog).dialog('close'); },
-			"Print Report": () => { printContentInNewWindow($(this.dialogContent).html()); }
+			"Print Report": () => { printContentInNewWindow($(this.dialogContent).html(), "Unit Check Report"); }
 		};
 		this.dialogParameters.width = 780;
 		this.dialogParameters.height = 560;
@@ -12857,37 +14222,28 @@ class UnitCheckDialog extends jqDialog {
 class EquationListDialog extends jqDialog {
 	constructor() {
 		super();
-		this.setTitle("Equation List");
+		this.setTitle("Equations");
+		this.equationForm = "integral";
+		this.sortMode = "type";
 	}
 	beforeCreateDialog() {
 		this.dialogParameters.buttons = {
-			"Cancel": () => {
-				$(this.dialog).dialog('close');
-			},
-			"Print Equations": () => {
-				let contentHTML = $(this.dialogContent).html();
-				printContentInNewWindow(contentHTML);
-			}
+			"Close": () => { $(this.dialog).dialog('close'); }
 		};
+		this.dialogParameters.width = 980;
+		this.dialogParameters.height = 650;
+		this.dialogParameters.resizable = true;
+	}
+	modelFileName() {
+		let fileName = fileManager.fileName;
+		if (!fileName) return "Unnamed file";
+		return String(fileName).split("\\").pop().split("/").pop();
 	}
 	renderSpecsInfoHtml() {
-		/** Set filename */
-		let fileName = fileManager.fileName;
-		if (fileName) {
-			const winSplit = fileName.split("\\");
-			fileName = winSplit[winSplit.length - 1];
-			const unixSplit = fileName.split("/");
-			fileName = unixSplit[unixSplit.length - 1];
-		} else {
-			fileName = "Unnamed file";
-		}
-
-		/** Get Date */
 		const date = new Date();
 		const month = (date.getMonth() + 1).toString().padStart(2, "0");
 		const day = date.getDate().toString().padStart(2, "0");
-		const fullDate = `${date.getFullYear().toString().substring(2, 4)}-${month}-${day} (yy-mm-dd)`;
-
+		const fullDate = `${date.getFullYear()}-${month}-${day}`;
 		const specs = [
 			["Time Unit", getTimeUnits()],
 			["Start", getTimeStart()],
@@ -12895,141 +14251,128 @@ class EquationListDialog extends jqDialog {
 			["DT", getTimeStep()],
 			["Method", getAlgorithm() === "RK1" ? "Euler" : "RK4"]
 		];
+		return (`<div class="equation-document-summary">
+			<span><b>Model:</b> ${htmlEscape(this.modelFileName())}</span>
+			<span><b>Date:</b> ${htmlEscape(fullDate)}</span>
+			${specs.map(spec => `<span class="equation-spec"><b>${htmlEscape(spec[0])}:</b> ${htmlEscape(String(spec[1] == null ? "" : spec[1]))}</span>`).join("")}
+		</div>`);
+	}
+
+	collectEntities() {
+		const flows = primitives("Flow");
+		const stocks = primitives("Stock").map(stock => ({
+			type: "stock",
+			name: getName(stock),
+			expression: getValue(stock),
+			units: getUnits(stock),
+			comment: stock.getAttribute("Note") || "",
+			inflows: flows.filter(flow => flow.target && String(flow.target.id) === String(getID(stock))).map(getName),
+			outflows: flows.filter(flow => flow.source && String(flow.source.id) === String(getID(stock))).map(getName)
+		}));
+		const flowRows = flows.map(flow => ({
+			type: "flow", name: getName(flow), expression: getValue(flow), units: getUnits(flow), comment: flow.getAttribute("Note") || ""
+		}));
+		const variableRows = primitives("Variable").map(variable => ({
+			type: variable.getAttribute("isConstant") === "true" ? "constant" : "auxiliary",
+			name: getName(variable), expression: getValue(variable), units: getUnits(variable), comment: variable.getAttribute("Note") || ""
+		}));
+		const lookupRows = primitives("Converter").map(lookup => {
+			let input = getConverterInput(lookup);
+			return {
+				type: "lookup", name: getName(lookup), expression: getValue(lookup), units: getUnits(lookup), comment: lookup.getAttribute("Note") || "",
+				lookupInput: input ? getName(input) : "Time"
+			};
+		});
+		return stocks.concat(flowRows, variableRows, lookupRows);
+	}
+	getRows() {
+		return SystemikaDocumentation.buildRows(this.collectEntities(), { form: this.equationForm, sort: this.sortMode });
+	}
+	equationFormLabel() {
+		return ({ integral: "Integral equations", differential: "Differential equations", difference: "Difference equations" })[this.equationForm];
+	}
+	sortModeLabel() {
+		return ({ type: "Variable type", name: "Variable name", computation: "Order of computation" })[this.sortMode];
+	}
+	renderPreviewHtml() {
+		const rows = this.getRows();
+		if (!rows.length) return `${this.renderSpecsInfoHtml()}<p><b>Total of 0 model entities</b></p><p>This model is empty. Build a model to show equations.</p>`;
+		let formNote = this.equationForm === "difference" && getAlgorithm() === "RK4"
+			? `<p style="font-size:0.9em;"><i>Difference form shows the standard DT stock-update equation. With RK4, Systemika evaluates rates at intermediate points internally rather than using a single Euler rate evaluation.</i></p>`
+			: "";
+		let orderNote = this.sortMode === "computation"
+			? `<p style="font-size:0.9em;"><i>Computation order lists stocks first as state values available at the beginning of a simulation step, then orders algebraic equations by their dependencies.</i></p>`
+			: "";
 		return (`
-			<h3 class="equation-list-header">${fileName}</h3>${fullDate}</br>
-			<h3 class="equation-list-header	">Specifications</h3>
-			<table class="modern-table zebra">
-				${specs.map(spec =>
-			`<tr>
-						<td>${spec[0]}</td>
-						<td>${spec[1]}</td>
-					</tr>`).join("")
-			}
+			${this.renderSpecsInfoHtml()}
+			<p><b>Equation form:</b> ${htmlEscape(this.equationFormLabel())}<br/>
+			<b>Sorted by:</b> ${htmlEscape(this.sortModeLabel())}</p>
+			${formNote}${orderNote}
+			<div class="equation-entity-count">Total of ${rows.length} model entities</div>
+			<table class="modern-table zebra equation-document-table">
+				<tr><th>#</th><th>Type</th><th>Name</th><th>Equation</th><th>Initial Condition</th><th>Units</th><th>Comment</th></tr>
+				${rows.map(row => `<tr>
+					<td style="text-align:right;">${row.order}</td>
+					<td>${htmlEscape(row.type)}</td>
+					<td>${htmlEscape(row.name)}</td>
+					<td style="font-family:monospace; white-space:normal; word-break:break-word;">${htmlEscape(row.equation)}</td>
+					<td style="font-family:monospace; white-space:normal;">${htmlEscape(row.initialCondition || "")}</td>
+					<td style="font-family:monospace;">${htmlEscape(row.units || "")}</td>
+					<td style="white-space:pre-wrap; word-break:break-word;">${htmlEscape(row.comment || "")}</td>
+				</tr>`).join("")}
 			</table>
 		`);
 	}
-	renderPrimitiveListHtml(info) {
+
+	renderPanelHtml() {
 		return (`
-		<h3 class="equation-list-header">${info.title}</h3>
-		<table class="modern-table zebra">
-			<tr>${info.tableColumns.map(col => (`<th>${col.header}</th>`)).join('')}</tr>
-				${info.primitives.map(p => `<tr>
-					${info.tableColumns.map(col => `<td style="${col.style ? col.style : ""}"">
-						${col.cellFunc(p)}
-					</td>`).join('')}
-			</tr>`).join('')}
-		</table>
+			<div class="systemika-documentation-controls" style="display:flex; gap:16px; align-items:flex-end; flex-wrap:wrap; margin-bottom:12px; padding:8px; border:1px solid #ccc;">
+				<label><b>Equation form</b><br/>
+					<select class="documentation-equation-form">
+						<option value="integral" ${this.equationForm === "integral" ? "selected" : ""}>Integral equations</option>
+						<option value="differential" ${this.equationForm === "differential" ? "selected" : ""}>Differential equations</option>
+						<option value="difference" ${this.equationForm === "difference" ? "selected" : ""}>Difference equations</option>
+					</select>
+				</label>
+				<label><b>Sort equations by</b><br/>
+					<select class="documentation-sort-mode">
+						<option value="type" ${this.sortMode === "type" ? "selected" : ""}>Variable type</option>
+						<option value="name" ${this.sortMode === "name" ? "selected" : ""}>Variable name</option>
+						<option value="computation" ${this.sortMode === "computation" ? "selected" : ""}>Order of computation</option>
+					</select>
+				</label>
+				<button type="button" class="documentation-export-txt">Export TXT</button>
+				<button type="button" class="documentation-export-csv">Export CSV</button>
+				<button type="button" class="documentation-export-latex">Export LaTeX</button>
+			</div>
+			<div class="systemika-documentation-preview">${this.renderPreviewHtml()}</div>
 		`);
 	}
+	updatePreview() {
+		$(this.dialogContent).find(".systemika-documentation-preview").html(this.renderPreviewHtml());
+	}
+	bindPanelEvents() {
+		$(this.dialogContent).find(".documentation-equation-form").change(event => {
+			this.equationForm = String($(event.currentTarget).val() || "integral");
+			this.updatePreview();
+		});
+		$(this.dialogContent).find(".documentation-sort-mode").change(event => {
+			this.sortMode = String($(event.currentTarget).val() || "type");
+			this.updatePreview();
+		});
+		$(this.dialogContent).find(".documentation-export-txt").click(() => {
+			fileManager.exportFile(SystemikaDocumentation.toPlainText(this.getRows()), ".txt");
+		});
+		$(this.dialogContent).find(".documentation-export-csv").click(() => {
+			fileManager.exportFile(SystemikaDocumentation.toCSV(this.getRows()), ".csv");
+		});
+		$(this.dialogContent).find(".documentation-export-latex").click(() => {
+			fileManager.exportFile(SystemikaDocumentation.toLaTeX(this.getRows()), ".tex");
+		});
+	}
 	beforeShow() {
-		const Stocks = primitives("Stock");
-		let stockHtml = "";
-		if (Stocks.length > 0) {
-			stockHtml = this.renderPrimitiveListHtml({
-				title: "Stocks",
-				primitives: Stocks,
-				tableColumns: [
-					{ header: "Name", cellFunc: (prim) => { return makePrimitiveName(getName(prim)); } },
-					{ header: "Init. Value", cellFunc: getValue, style: "font-family: monospace;" },
-					{
-						header: "Recalculated as",
-						cellFunc: (prim) => {
-							const flows = primitives("Flow");
-							const input = flows.filter(f => f.target).filter(f => f.target.id == getID(prim));
-							const output = flows.filter(f => f.source).filter(f => f.source.id == getID(prim));
-							const inputStr = input.map(f => ` +Δt*${makePrimitiveName(getName(f))}`).join("");
-							const outputStr = output.map(f => ` -Δt*${makePrimitiveName(getName(f))}`).join("");
-							return makePrimitiveName(getName(prim)) + inputStr + outputStr;
-						}
-					},
-				]
-			});
-		}
-
-		const Flows = primitives("Flow");
-		let flowHtml = "";
-		if (Flows.length > 0) {
-			flowHtml = this.renderPrimitiveListHtml({
-				title: "Flows",
-				primitives: Flows,
-				tableColumns: [
-					{ header: "Name", cellFunc: (prim) => { return makePrimitiveName(getName(prim)); } },
-					{ header: "Rate", cellFunc: getValue, style: "font-family: monospace;" },
-					{
-						header: "Restricted",
-						cellFunc: (prim) => prim.getAttribute("OnlyPositive") === "true" ? `${getName(prim)} ≥ 0` : "",
-						style: "text-align: center;"
-					},
-				]
-			});
-		}
-
-		const Variables = primitives("Variable");
-		const Auxiliaries = Variables.filter(prim => prim.getAttribute("isConstant") !== "true");
-		const Constants = Variables.filter(prim => prim.getAttribute("isConstant") === "true");
-
-		let auxiliaryHtml = "";
-		if (Auxiliaries.length > 0) {
-			auxiliaryHtml = this.renderPrimitiveListHtml({
-				title: "Auxiliaries",
-				primitives: Auxiliaries,
-				tableColumns: [
-					{ header: "Name", cellFunc: (prim) => { return makePrimitiveName(getName(prim)); } },
-					{ header: "Value", cellFunc: getValue, style: "font-family: monospace;" }
-				]
-			});
-		}
-
-		let constantHtml = "";
-		if (Constants.length > 0) {
-			constantHtml = this.renderPrimitiveListHtml({
-				title: "Constants",
-				primitives: Constants,
-				tableColumns: [
-					{ header: "Name", cellFunc: (prim) => { return makePrimitiveName(getName(prim)); } },
-					{ header: "Value", cellFunc: getValue, style: "font-family: monospace;" }
-				]
-			});
-		}
-
-		const Lookups = primitives("Converter");
-		let lookupHtml = "";
-		if (Lookups.length > 0) {
-			lookupHtml = this.renderPrimitiveListHtml({
-				title: "Lookups",
-				primitives: Lookups,
-				tableColumns: [
-					{ header: "Name", cellFunc: (prim) => { return makePrimitiveName(getName(prim)); } },
-					{ header: "Data", cellFunc: getValue, style: "font-family: monospace; max-width: 400px; word-break: break-word;" },
-					{ header: "Ingoing Link", cellFunc: (prim) => { return findLinkedInPrimitives(prim.id).length !== 0 ? getName(findLinkedInPrimitives(prim.id)[0]) : "None"; } }
-				]
-			});
-		}
-		const numberOfModelEntities = Stocks.length + Flows.length + Auxiliaries.length + Constants.length + Lookups.length;
-
-		if (numberOfModelEntities == 0) {
-			this.setHtml("This model is empty. Build a model to show equation list");
-			return;
-		}
-
-		const htmlOut = `
-			<h1>Equation List</h1>
-			<div style="display:flex;">
-				<div>
-					${this.renderSpecsInfoHtml()}
-				</div>
-				<div style="padding-left: 32px; ">
-					${stockHtml}
-					${flowHtml}
-					${auxiliaryHtml}
-					${constantHtml}
-					${lookupHtml}
-					<br/>Total of ${numberOfModelEntities} model entities
-				</div>
-			</div>
-		`;
-
-		this.setHtml(htmlOut);
+		this.setHtml(this.renderPanelHtml());
+		this.bindPanelEvents();
 	}
 }
 

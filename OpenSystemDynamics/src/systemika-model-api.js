@@ -238,34 +238,50 @@ function setUnits(primitive, units) {
     for (const item of arrify(primitive)) setAttributeUndoable(item, "Units", String(units == null ? "" : units));
 }
 
+function decodeStoredDefinition(value) {
+    return String(value == null ? "" : value).replace(/\\n/g, "\n");
+}
+
+function canonicalizeEquationReferences(value) {
+    // Older .ssd files use [Name] references. Systemika names are identifier-safe,
+    // so bare Name is the canonical syntax. Keep non-identifier brackets intact
+    // for maximum legacy compatibility.
+    return String(value == null ? "" : value).replace(/\[([A-Za-z_][A-Za-z0-9_]*)\]/g, "$1");
+}
+
+function encodeStoredDefinition(value) {
+    return String(value == null ? "" : value).replace(/\r\n?/g, "\n").replace(/\n/g, "\\n");
+}
+
 function getValue(primitive) {
     return systemikaApply(primitive, item => {
         if (!item || !item.value) return "";
+        let value = "";
         switch (item.value.nodeName) {
-            case "Stock": return item.getAttribute("InitialValue") || "";
-            case "Flow": return item.getAttribute("FlowRate") || "";
-            case "Variable": return item.getAttribute("Equation") || "";
-            case "Converter": return item.getAttribute("Data") || "";
+            case "Stock": value = item.getAttribute("InitialValue") || ""; break;
+            case "Flow": value = item.getAttribute("FlowRate") || ""; break;
+            case "Variable": value = item.getAttribute("Equation") || ""; break;
+            case "Converter": value = item.getAttribute("Data") || ""; break;
             default: return "";
         }
+        return decodeStoredDefinition(value);
     });
 }
 
 function setValue(primitive, value) {
     for (const item of arrify(primitive)) {
         if (!item || !item.value) continue;
-        const text = String(value == null ? "" : value);
         switch (item.value.nodeName) {
-            case "Stock": setAttributeUndoable(item, "InitialValue", text); break;
-            case "Flow": setAttributeUndoable(item, "FlowRate", text); break;
-            case "Variable": setAttributeUndoable(item, "Equation", text); break;
-            case "Converter": setAttributeUndoable(item, "Data", text); break;
+            case "Stock": setAttributeUndoable(item, "InitialValue", encodeStoredDefinition(canonicalizeEquationReferences(value))); break;
+            case "Flow": setAttributeUndoable(item, "FlowRate", encodeStoredDefinition(canonicalizeEquationReferences(value))); break;
+            case "Variable": setAttributeUndoable(item, "Equation", encodeStoredDefinition(canonicalizeEquationReferences(value))); break;
+            case "Converter": setAttributeUndoable(item, "Data", encodeStoredDefinition(value)); break;
         }
     }
 }
 
-function getData(lookup) { return systemikaApply(lookup, item => item ? (item.getAttribute("Data") || "") : ""); }
-function setData(lookup, data) { for (const item of arrify(lookup)) setAttributeUndoable(item, "Data", String(data || "")); }
+function getData(lookup) { return systemikaApply(lookup, item => item ? decodeStoredDefinition(item.getAttribute("Data") || "") : ""); }
+function setData(lookup, data) { for (const item of arrify(lookup)) setAttributeUndoable(item, "Data", encodeStoredDefinition(data)); }
 function getConverterInput(lookup) {
     return systemikaApply(lookup, item => {
         if (!item) return null;

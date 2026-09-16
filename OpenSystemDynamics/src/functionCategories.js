@@ -6,17 +6,6 @@
  */
 var functionCategories = [
   {
-    name: "Conditional Function",
-    functions: [
-      {
-        name: "IfThenElse",
-        replacement: "IfThenElse(##Condition$$, ##Value if True$$, ##Value if False$$)",
-        description: "Returns the second argument when the condition is true and the third argument when it is false.",
-        example: { definition: "IfThenElse([Population] > 100, 1, 0)", result: "1 or 0" }
-      }
-    ]
-  },
-  {
     name: "Mathematical Functions",
     functions: [
       { name: "Absolute Value", replacement: "Abs(##Value$$)", description: "Returns the absolute value of a number.", example: { definition: "Abs(-23)", result: "23" } },
@@ -46,33 +35,39 @@ var functionCategories = [
     name: "Programming Functions",
     functions: [
       {
+        name: "IfThenElse",
+        replacement: "IfThenElse(##Condition$$, ##Value if True$$, ##Value if False$$)",
+        description: "Returns the second argument when the condition is true and the third argument when it is false.",
+        example: { definition: "IfThenElse(Population > 100, 1, 0)", result: "1 or 0" }
+      },
+      {
         name: "Smooth",
         replacement: "Smooth(##Input$$, ##Smooth Time$$, ##Order$$, ##Initial Value$$)",
         description: "Applies an exponential smooth. Order must be an integer from 1 to 100. Higher orders create a progressively sharper distributed response while preserving the specified total smooth time.",
-        example: { definition: "Smooth([Demand], 4, 2, 0)" }
+        example: { definition: "Smooth(Demand, 4, 2, 0)" }
       },
       {
         name: "Delay",
         replacement: "Delay(##Input$$, ##Delay Time$$, ##Order$$, ##Initial Value$$)",
         description: "Applies an N-stage exponential delay. Order must be an integer from 1 to 100; Delay Time is the total mean delay across all stages.",
-        example: { definition: "Delay([Orders], 6, 3, 0)" }
+        example: { definition: "Delay(Orders, 6, 3, 0)" }
       },
       {
         name: "Lag",
         replacement: "Lag(##Input$$, ##Lag Time$$, ##Initial Value$$)",
         description: "Returns the input shifted backward by a fixed lag time: at time t, Lag returns the input value from t - lag time. The Initial Value is used before sufficient input history exists.",
-        example: { definition: "Lag([Target], 2, 0)" }
+        example: { definition: "Lag(Target, 2, 0)" }
       }
     ]
   },
   {
     name: "Statistical Functions",
     functions: [
-      { name: "Random Uniform", syntax: "RandomUniform(Minimum, Maximum, [Seed])", replacement: "RandomUniform(##Minimum$$, ##Maximum$$, [##Seed$$])", description: "Generates a uniform random value between the supplied bounds. Optional third argument: Seed. With a seed, the sequence is reproducible; without one, each model run uses fresh randomness." },
-      { name: "Random Normal", syntax: "RandomNormal(Mean, Standard Deviation, [Seed])", replacement: "RandomNormal(##Mean$$, ##Standard Deviation$$, [##Seed$$])", description: "Generates a normally distributed random value. Optional third argument: Seed. With a seed, the sequence is reproducible; without one, each model run uses fresh randomness." },
-      { name: "Random Triangular", syntax: "RandomTriangular(Minimum, Maximum, Mode, [Seed])", replacement: "RandomTriangular(##Minimum$$, ##Maximum$$, ##Mode$$, [##Seed$$])", description: "Generates a triangularly distributed random value. Optional fourth argument: Seed. With a seed, the sequence is reproducible; without one, each model run uses fresh randomness." },
-      { name: "Random Gamma", syntax: "RandomGamma(Shape, Scale, [Seed])", replacement: "RandomGamma(##Shape$$, ##Scale$$, [##Seed$$])", description: "Generates a gamma-distributed random value using positive shape and scale parameters. Optional third argument: Seed." },
-      { name: "Random Beta", syntax: "RandomBeta(Alpha, Beta, [Seed])", replacement: "RandomBeta(##Alpha$$, ##Beta$$, [##Seed$$])", description: "Generates a beta-distributed random value between 0 and 1 using positive alpha and beta parameters. Optional third argument: Seed." }
+      { name: "Random Uniform", syntax: "RandomUniform(Minimum, Maximum, Seed?)", replacement: "RandomUniform(##Minimum$$, ##Maximum$$)", description: "Generates a uniform random value between the supplied bounds. Optional third argument: Seed. With a seed, the sequence is reproducible; without one, each model run uses fresh randomness." },
+      { name: "Random Normal", syntax: "RandomNormal(Mean, Standard Deviation, Seed?)", replacement: "RandomNormal(##Mean$$, ##Standard Deviation$$)", description: "Generates a normally distributed random value. Optional third argument: Seed. With a seed, the sequence is reproducible; without one, each model run uses fresh randomness." },
+      { name: "Random Triangular", syntax: "RandomTriangular(Minimum, Maximum, Mode, Seed?)", replacement: "RandomTriangular(##Minimum$$, ##Maximum$$, ##Mode$$)", description: "Generates a triangularly distributed random value. Optional fourth argument: Seed. With a seed, the sequence is reproducible; without one, each model run uses fresh randomness." },
+      { name: "Random Gamma", syntax: "RandomGamma(Shape, Scale, Seed?)", replacement: "RandomGamma(##Shape$$, ##Scale$$)", description: "Generates a gamma-distributed random value using positive shape and scale parameters. Optional third argument: Seed." },
+      { name: "Random Beta", syntax: "RandomBeta(Alpha, Beta, Seed?)", replacement: "RandomBeta(##Alpha$$, ##Beta$$)", description: "Generates a beta-distributed random value between 0 and 1 using positive alpha and beta parameters. Optional third argument: Seed." }
     ]
   },
   {

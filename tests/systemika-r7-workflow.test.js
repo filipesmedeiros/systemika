@@ -59,12 +59,12 @@ test('paused Advance delegates live value changes to the engine instead of a nar
   assert.doesNotMatch(toolbox, /advanceSafeTools = \[[^\]]*"flow"/);
 });
 
-test('folder control opens an in-app Runs manager with rename duplicate delete and Close refresh', () => {
+test('folder control opens an in-app Runs manager with rename delete delete-all and Close refresh', () => {
   assert.match(runManager, /openSystemikaRunsManager/);
   const openFn = between(runManager, 'async function openRunsFolder()', 'function updateBusyUi');
   assert.doesNotMatch(openFn, /\.openFolder\(/);
   const dlg = between(editor, 'class SystemikaRunsManagerDialog', 'let systemikaRunsManagerDialog');
-  assert.match(dlg, /"Rename"/); assert.match(dlg, /"Duplicate"/); assert.match(dlg, /"Delete"/); assert.match(dlg, /"Close"/);
+  assert.match(dlg, /"Rename"/); assert.doesNotMatch(dlg, /"Duplicate"\s*:/); assert.match(dlg, /"Delete"/); assert.match(dlg, /"Delete All"/); assert.match(dlg, /"Close"/);
   assert.match(dlg, /afterClose\(\)[\s\S]*SystemikaOutputDevices\.refreshAll\(\)/);
 });
 

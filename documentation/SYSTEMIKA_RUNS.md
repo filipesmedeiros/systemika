@@ -17,7 +17,7 @@
 
 ## Revision 8 interaction controls
 
-- The toolbar folder icon opens the in-app **Manage Runs** dialog instead of the operating-system file manager. Runs can be renamed, duplicated, or deleted there.
+- The toolbar folder icon opens the in-app **Manage Runs** dialog instead of the operating-system file manager. Runs can be renamed, deleted individually, or removed together with **Delete All**.
 - **Finish** completes a paused Advance simulation; **Reset** discards it; **Clear** clears plot/table rendering only.
 - Existing primitive values/definitions may be submitted to the simulation engine while Advance is paused. The engine's supported `setValue()` path decides whether the proposed live equation is safe; Systemika no longer requires legacy `isConstant=true` metadata. Structural topology changes still require ending the active Advance simulation.
 - Reset during Advance removes only the unfinished current run from outputs; previously selected saved runs remain displayed. Deleted runs are automatically deselected.
@@ -28,11 +28,11 @@ Systemika now stores every completed **normal user-initiated model run** indepen
 
 ## User behavior
 
-- The toolbar contains **Run name**, defaulting to `Base`.
+- The toolbar contains **Run Name**, defaulting to `Base`. Pressing **Enter**, **Ctrl/Cmd+1**, or **Ctrl/Cmd+R** while the cursor remains in this field runs/pauses the model; ordinary text entry does not activate single-letter editor shortcuts.
 - Starting a run creates a `Runs` directory beside the saved `.ssd` model.
-- A completed run is written as `Runs/<Run name>.sysrun`.
-- Reusing an existing run name prompts before the simulation starts. Systemika uses its in-app Yes/No dialog first for cross-platform reliability (including Linux); the Electron-native message box is retained only as a fallback.
-- The folder button beside **Run name** opens Systemika's in-app **Manage Runs** panel for rename, duplicate, and delete operations.
+- A completed run is written as `Runs/<Run Name>.sysrun`.
+- Reusing an existing Run Name prompts before the simulation starts. Systemika uses its in-app Yes/No dialog first for cross-platform reliability (including Linux); the Electron-native message box is retained only as a fallback.
+- The folder button beside **Run Name** opens Systemika's in-app **Manage Runs** panel for rename, individual delete, and **Delete All** operations. Typing a run name inside Manage Runs is isolated from canvas/tool shortcuts.
 - Legacy TimePlot objects loaded from older models use a single **Run data** selector.
 - The current Systemika **Time Plot**, **XY Plot**, **Histogram**, and **Table** contain named-run checklists and can combine two or more saved runs. Newly completed runs are selected automatically.
 - The run-data panels provide **Refresh** and **Manage Runs** controls. Multi-run panels also provide **Select All / Deselect All**.
@@ -68,7 +68,7 @@ node --test tests/systemika-runs.test.js
 
 ## 2026.09.08 integration correction
 
-The editor is hosted in `MultiSimulationAnalyser/SimulationIFrame`. Run storage now uses the established `electronAPI` bridge rather than a separate iframe-sensitive bridge object. The Run name control remains visible in browser mode, but the toolbar visibly reports `Runs not saved`; clicking the folder control explains that project-local run storage requires Systemika Desktop.
+The editor is hosted in `MultiSimulationAnalyser/SimulationIFrame`. Run storage now uses the established `electronAPI` bridge rather than a separate iframe-sensitive bridge object. The Run Name control remains visible in browser mode, but the toolbar visibly reports `Runs not saved`; clicking the folder control explains that project-local run storage requires Systemika Desktop.
 
 
 ## 2026.09.08 revision 2
@@ -168,3 +168,7 @@ Firefox and Safari remain intentionally limited to Browser Storage Mode because 
 ## 2026.09.13 comparative Histogram
 
 Histogram uses the shared multi-run checklist (`RunNames`) and can overlay two or more selected runs. Every selected run is binned against the same lower bound, upper bound, and number of bars. With automatic bounds enabled, the common range is calculated from the combined values of all selected runs. Each run is drawn with a translucent fill plus an outline and legend label so overlapping distributions remain distinguishable. PDF mode normalizes each run by its own observation count while retaining the same common bins.
+
+## Comparison-list sizing
+
+In output settings, **Runs to compare** and **Display order** use fixed-height scrollable lists sized for about three runs. Large run libraries therefore scroll inside the control instead of expanding the output-settings pane.

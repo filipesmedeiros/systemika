@@ -1,11 +1,149 @@
+## 2026-09-16 — Docked output workspace and keyboard isolation
+
+### Output workspace refinements
+
+- Restored the original Auxiliary toolbar icon and gave the Equations tool its own dedicated icon asset.
+- Decoupled Equations from plot/table split sizing so Equations always use the full output-panel height.
+- Plot/Table views now default to 40% output and 60% settings while retaining user-resizable split behavior.
+- Table selected variables now update the live table immediately and are shown in a persistent Selected Variable(s) summary.
+- Regression baseline: **301/301 tests passing** with **19/19 permanent validation models**.
+
+- Refined the resizable right-hand Output workspace: **Equations** is the default full-height view; Plot/Table outputs use the upper output pane plus a resizable lower settings pane.
+- Added a dedicated **Equations (E)** toolbar tool immediately before Table and removed the Print menu. Output navigation now uses only the toolbar tools/keyboard shortcuts; the output-selector dropdown and New button were removed.
+- Replaced the in-app floating output overlay with a true detachable operating-system window using the supplied unlink icon. Detached outputs can move across monitors; **Attach** returns the live panel to the main workspace. The right-side panel now defaults to 25% width.
+- Prevented text entry in Manage Runs and other editable fields from triggering single-key modeling/output tools.
+- Added Enter, Ctrl/Cmd+1, and Ctrl/Cmd+R support while focus remains in the toolbar Run Name field.
+- Fixed Runs to compare and Display order to scrollable three-row heights and plot variable selectors to about five rows.
+- Removed the Number Box creation button and N shortcut while retaining legacy Number Box loading compatibility.
+- Added six focused regression checks; the complete suite is **295/295 passing** with **19/19 permanent validation models**.
+- Simplified the Equations view: removed redundant heading/Print controls, moved model/date/simulation specifications into a compact top summary, and moved **Total of N model entities** above the equation table.
+- Added Escape-to-close behavior for dialogs, including Manage Runs, even while a text field has focus.
+- Fixed the docked Table view so selected variables are visibly represented while run data is loading.
+
+## First public release finalization — run ordering and dedicated output settings
+
+- Removed **Duplicate** from the Manage Runs dialog; Rename, Delete, Delete All, and Close remain available.
+- Renamed the toolbar label **Run name** to **Run Name**.
+- Added a persistent **Display order** list with up/down controls to multi-run comparison panels so users control plot series and legend ordering.
+- Renamed plot and Table selectors to **Selected Variable(s)**; Table retains its per-variable Decimal column.
+- Replaced plot/table double-click property access with dedicated **⚙ Settings** controls. Plot Settings sits after the page delete control at the bottom-right; Table has a floating Settings control.
+- Replaced the plot-page trash-can control with a **−** sign matching the existing **+** control in font and size; the − sign dims when only one page remains.
+- Full automated suite: **289/289 passing** with **19/19 permanent validation models**.
+
+## First public release finalization — fixed Histogram scaling and per-variable Table decimals
+
+- Removed **Select Scaling Type** from Histogram Properties; Histograms now always display standard bin counts and no longer expose the PDF scaling mode.
+- Removed the Table dialog's global **Precision** and **Decimal** controls.
+- Added an editable **Decimal** column to Table **Added Model Entities**, persisted independently for each displayed variable and applied correctly to both single-run and multi-run table columns.
+- Older Table models use the stored legacy decimal value as the default until a per-variable setting is saved.
+- Added focused regression coverage for fixed Histogram rendering, Table UI/storage, legacy decimal fallback, and multi-run per-variable formatting.
+- Full automated suite: **284/284 passing** with **19/19 permanent validation models**.
+
+## First public release finalization — plot-page delete icon and delay-processing Auxiliary symbol
+
+- Replaced the plot-page Delete control artwork with the supplied trash-can SVG.
+- When a Figure has only one page, the Delete Page icon is visibly inactive: it is grayscale and reduced to 28% opacity while the button remains disabled.
+- Auxiliaries whose definitions contain `Smooth(...)`, `Delay(...)`, or `Lag(...)` now use the supplied processing/hourglass symbol on the model canvas. Removing those functions restores the normal Auxiliary circle automatically; Ghosts follow the source Auxiliary symbol.
+- Added regression coverage for the supplied artwork, last-page disabled styling, and dynamic delay-processing symbol switching.
+- Full automated suite: **280/280 passing** with **19/19 permanent validation models**.
+
+## First public release finalization — Electron 44 clipboard fix and toolbar Figure copy/cut
+
+- Simplified Figure properties: removed Plot Period and the redundant Figure Pages panel; page deletion is now available from a trash-can control on the Figure itself. XY plots use a fixed thick line width.
+- Added **Delete All** to Manage Runs with confirmation and cleanup of plot/table run selections.
+
+- Increased PNG graph export to 3× raster resolution with high-quality smoothing for sharper text, axes, and line work.
+- Added transparent export edge padding and explicit legend-bound sizing so the complete legend border is retained rather than clipped at the right edge.
+- Selecting one rendered Figure and using **Copy** (toolbar or Ctrl/Cmd+C) writes a high-resolution transparent PNG to the operating-system clipboard while preserving Systemika's internal model-object clipboard for normal Paste/duplication. **Cut** (toolbar or Ctrl/Cmd+X) copies the Figure image first and then removes the Figure from the model.
+- Updated the desktop clipboard bridge for Electron 44: the removed `clipboard.writeImage()` helper is replaced by the W3C-style `clipboard.write()` + `ClipboardItem` API, with a browser Clipboard API fallback when available.
+- Added regression coverage for raster scaling, export padding, Electron 44 clipboard bridge wiring, and toolbar/keyboard Figure Copy and Cut behavior.
+- Full automated suite: **273/273 passing** with **19/19 permanent validation models**.
+
+## First public release finalization — unsaved-changes false-positive fix
+
+- Fixed a dirty-state false positive where opening a model and then clicking/selecting without editing could turn on **Unsaved Changes**.
+- Clean loaded models are now canonicalized once after parsing, so harmless XML formatting/order normalization is not mistaken for a model edit.
+- Blank-canvas clicks and rectangle-selection starts no longer create undo snapshots.
+- Genuine model edits, geometry changes, property changes, Undo/Redo, and Save state tracking remain unchanged.
+- Added regression coverage for clean-baseline normalization and blank-canvas interactions.
+- Full automated suite: **272/272 passing** with **19/19 permanent validation models**.
+
+## First public release finalization — legend spacing refinement
+
+- Reduced the outside-grid legend gap from 14 px to 11 px (about 20%) so the legend remains visibly separated from the plot grid without sitting unnecessarily far to the right.
+- All other plot rendering, XY numbering, page navigation, and export behavior are unchanged.
+- Full automated suite: **270/270 passing** with **19/19 permanent validation models**.
+
+## First public release finalization — graph export, XY labels, documentation initials, and function categories
+
+- Added a visible margin between outside-grid legends and the plotting area.
+- Changed XY **Show Number** so run/series numbers are rendered directly on the curves and matched in the legend.
+- Replaced canvas-capture graph export with native SVG reconstruction; SVG and PNG exports are transparent, avoid tainted-canvas failures, and exclude Figure page-navigation controls/page numbers.
+- Extended the **Initial Condition** documentation convention to top-level `Smooth`, `Delay`, and `Lag` definitions by replacing their initial-value argument in the displayed equation with `Entity(t0)` and reporting the actual initialization separately.
+- Moved `IfThenElse` into **Programming Functions** and removed the obsolete **Conditional Function** category.
+- Added focused regression coverage for the export pipeline, legend spacing, XY curve numbering, stateful-function initial conditions, and function-category organization.
+- Full automated suite: **269/269 passing** with **19/19 permanent validation models**.
+
+## First public release finalization — comments, equation output, graph export, and XY numbering
+
+- Standardized stock documentation around an explicit **Initial Condition** field such as `Stock(t0) = 100`; integral equations now retain `Stock(t0)` in the governing equation, matching the differential/difference documentation convention.
+- Added a persistent **Comment** field to model-entity definition dialogs and included Comment as the final column in printed/CSV equation documentation and in TXT/LaTeX exports.
+- Renamed **Print → Model Documentation...** to **Print → Print Equations...**.
+- Added transparent-background **Export SVG** and **Export PNG** controls to Time Plot, comparison Time Plot, XY Plot, and Histogram property dialogs.
+- Updated plot legends so line samples reproduce the corresponding series dash pattern and width.
+- Replaced XY **Show Markers** with **Show Number**; numbered XY series display matching numbers in the legend, while isolated single-point series remain visible automatically.
+- Added focused regression coverage for the documentation schema, comment persistence, graph export controls/transparency, legend dash samples, and XY numbering.
+- Full automated suite: **266/266 passing** with **19/19 permanent validation models**.
+
+## First public release finalization — equation/plot/documentation refinements
+
+- Replaced type-wide Time/Compare Plot line styling with per-plotted-entity dash/width settings. Every entity now starts solid at width 2; select an item in **Added Model Entities** to customize it. Styles are page-specific.
+- Separated stock initialization from governing equation text with a dedicated documentation field, subsequently finalized as **Initial Condition** (`Stock(t0) = ...`).
+- Added **Export LaTeX** (`.tex`) to the equation documentation panel.
+- Changed Equation Editor Tab behavior to advance through fields, and double-click now focuses/selects the Name field first.
+- Made bare model-entity names the canonical equation syntax. Legacy `[Name]` references are still accepted and identifier-safe legacy references are normalized when models are loaded/saved.
+- Fixed multiline-definition validation/storage so nested functions can span lines without an escape character.
+- Added permanent validation fixture `19-bare-multiline-equation.ssd` and focused regression coverage for all refinements.
+- Full automated suite: **259/259 passing** with **19/19 permanent validation models**.
+
 # Pre-release development history leading to Systemika Studio 1.0.0
+
+## First public release finalization — paged Figures and Model Documentation
+
+- Added multiple named pages to Time Plot, comparison Time Plot, XY Plot, and Histogram Figures. Pages share Figure geometry but keep independent variables, run selections, axes, labels, and plot settings.
+- Added compact Figure page navigation plus Add/Duplicate/Delete/rename controls in Figure Properties. Legacy `.ssd` plots automatically become a one-page Figure.
+- Replaced the print-only Equation List with a Model Documentation panel supporting integral, differential, and difference stock-equation forms.
+- Added documentation sorting by variable type, variable name, and dependency-based computation order.
+- Added plain-text equation-list export and CSV equation-table export while retaining print output.
+- Added 13 regression checks for page persistence/navigation semantics, documentation forms/sorting/export, and editor integration.
+- Full automated suite: **251/251 passing**; permanent validation model set remains **18/18**.
+
+## Final release correction — signed, unrestricted Flow values
+
+- Removed the inherited positive-only Flow clamp from the native Systemika simulation engine.
+- New Flows now store the legacy `.ssd` compatibility attribute as `OnlyPositive="false"`.
+- Legacy models containing `OnlyPositive="true"` are normalized to unrestricted Flows on load; the engine ignores that legacy flag even when supplied through the programmatic model specification.
+- Negative stock-to-stock Flow rates reverse the effective transfer direction naturally and remain subject only to the model equations; Systemika imposes no Flow bounds.
+- Removed the obsolete **Restricted** column from the Flow section of model information.
+- Added `18-negative-flow.ssd` as a permanent validation fixture and regression tests for negative Flow values and legacy metadata.
+- Full automated suite: **251/251 passing**.
+
+## Final release hardening — packaging dependency cleanup
+- Pin the Linux AppImage toolset to the modern static runtime (`1.0.3`) to avoid legacy FUSE2 requirements.
+
+- Replaced the Gulp/useref release staging pipeline with a dependency-free Node.js build script.
+- Removed the obsolete inherited OpenSystemDynamics Gulp 3 packaging helper.
+- Reduced the `distribute` npm project to one pinned build dependency: `electron-builder` 26.16.1.
+- Pinned Electron 44.3.0 in the builder configuration and disabled unnecessary native-module rebuilding.
+- Changed ordinary installer dependency installation to skip npm's automatic audit headline; maintainers retain an explicit `npm run audit:build` review command.
+- Added three packaging-toolchain regression checks; the release suite now passes **236/236** tests.
 
 ## Final pre-release change — Question-mark visibility toggle
 
 - Added a vertical-toolbar **Hide/Unhide Question Marks (Q)** control using the supplied hidden-eye icon.
 - Added the single-key **Q** shortcut and documented it in built-in and packaged help.
 - Hiding the markers is display-only: definition checking, error reporting, and simulation validation are unchanged.
-- Added two regression checks; the suite now passes **233/233** tests.
+- Added two regression checks; the suite now passes **236/236** tests.
 
 ## Systemika 0.9.9 — Single-run Histogram visual polish
 
@@ -112,7 +250,7 @@
 
 ## Native engine/editor 0.8.4 — Multiline equations and corrected function help
 
-- Reverted the 0.8.3 function-list presentation: function names are clean again and `IfThenElse` is restored to the Conditional Function category.
+- Pre-release 0.8.x temporarily placed `IfThenElse` in a dedicated Conditional Function category; the final 1.0.0 interface later consolidates it under Programming Functions.
 - Statistical-function hover tooltips now show the complete call syntax, including the optional seed notation such as `RandomUniform(Minimum, Maximum, [Seed])`.
 - Autocomplete and the visible function list no longer use full signatures as function names.
 - The equation editor now uses Enter to insert a line break. Ctrl+Enter on Windows/Linux and Cmd+Enter on macOS applies the equation.

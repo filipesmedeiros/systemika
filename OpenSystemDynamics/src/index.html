@@ -69,6 +69,8 @@ terms of the Affero General Public License (http://www.gnu.org/licenses/agpl-3.0
 	<!-- Native Systemika simulation engine (default backend). -->
 	<script type="text/javascript" src="systemika-engine.js"></script>
 	<script type="text/javascript" src="systemika-units.js"></script>
+	<script type="text/javascript" src="systemika-plot-pages.js"></script>
+	<script type="text/javascript" src="systemika-documentation.js"></script>
 	<script type="text/javascript" src="editor.js"></script>
 	<!-- endbuild -->
 
@@ -171,17 +173,6 @@ terms of the Affero General Public License (http://www.gnu.org/licenses/agpl-3.0
 						</span>
 					</div>
 				</div>
-				<div class="eMenu">
-					<button class="menuButton">Print</button>
-					<div class="menuContent">
-						<span>
-							<button id="btn_print_model">Print Diagram</button>
-						</span>
-						<span>
-							<button id="btn_equation_list">Print Equations</button>
-						</span>
-					</div>
-				</div>
 				<!-- Simulation Settings are intentionally hidden from the menu bar for the current release. -->
 
 
@@ -255,8 +246,8 @@ terms of the Affero General Public License (http://www.gnu.org/licenses/agpl-3.0
 				</div>
 			</div>
 			<div class="tool-grouping output-actions" aria-label="Output displays">
-				<button id="btn_numberbox" data-title="Number Box (N)" class="tool-button" data-tool="numberbox">
-					<img src="graphics/numberbox.svg" />
+				<button id="btn_equations" data-title="Equations (E)" class="tool-button" data-tool="equations" aria-label="Equations">
+					<img src="graphics/equations.svg" alt="" aria-hidden="true" />
 				</button>
 				<button id="btn_table" data-title="Table (T)" class="tool-button" data-tool="table">
 					<img src="graphics/table.svg" />
@@ -273,7 +264,7 @@ terms of the Affero General Public License (http://www.gnu.org/licenses/agpl-3.0
 			</div>
 			<div class="tool-grouping" id="runControllerArea">
 				<div id="systemika-run-controls">
-					<label for="systemika-run-name">Run name</label>
+					<label for="systemika-run-name">Run Name</label>
 					<input id="systemika-run-name" type="text" value="Base" autocomplete="off" spellcheck="false" aria-label="Simulation run name" />
 					<button id="btn_open_runs_folder" type="button" data-title="Manage Runs" aria-label="Manage Runs">
 						<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 5a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5Zm2 2v10h14V7H5Z"/></svg>
@@ -315,9 +306,6 @@ terms of the Affero General Public License (http://www.gnu.org/licenses/agpl-3.0
 		<div class="info-bar">
 				<div class="info-bar__definition info-box__element" data-title="Selection"></div>
 				<!--<div style="border-left:1px solid #ccc; margin: 6px  0px;"></div>--> <!--Divider here-->
-				<div class="info-bar__definition-restricted info-box__element"
-					data-title="Restricted">
-				</div>
 				<div class="info-bar__definition-error info-box__element"
 					data-title="Definition Error">
 				</div>
@@ -396,6 +384,21 @@ terms of the Affero General Public License (http://www.gnu.org/licenses/agpl-3.0
 				<g class="layer anchor"></g>
 			</svg>
 		</div>
+		<div id="systemika-output-splitter" class="systemika-output-splitter" role="separator" aria-orientation="vertical" aria-label="Resize modeling and output panels"></div>
+		<aside id="systemika-output-panel" class="systemika-output-panel" aria-label="Outputs">
+			<div class="systemika-output-header">
+				<strong id="systemika-output-title">Equations</strong>
+				<button id="systemika-output-detach" class="systemika-output-detach-button" type="button" title="Detach output panel" aria-label="Detach output panel">
+					<img src="graphics/unlink.svg" alt="" aria-hidden="true" /><span>Detach</span>
+				</button>
+			</div>
+			<div id="systemika-output-body" class="systemika-output-body">
+				<div id="systemika-output-view" class="systemika-output-view"></div>
+				<div id="systemika-output-horizontal-splitter" class="systemika-output-horizontal-splitter" role="separator" aria-orientation="horizontal" aria-label="Resize output and settings panels"></div>
+				<div id="systemika-output-settings" class="systemika-output-settings"></div>
+			</div>
+			<div id="systemika-output-holding" class="systemika-output-holding" aria-hidden="true"></div>
+		</aside>
 		</div> <!-- End of workspace-row -->
 		<div class="editor-footer" style="display: none;">
 			<div class="editor-footer-filepath">FilePath/FileName</div>

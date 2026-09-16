@@ -26,7 +26,7 @@ You need:
 1. A Linux computer with a graphical desktop environment.
 2. The Systemika Studio 1.0.0 source folder.
 3. An internet connection while building, because npm downloads the required packaging dependencies.
-4. Node.js and npm installed.
+4. Node.js **22.12 or newer** (a current Node.js LTS release) and npm installed.
 
 Systemika Studio itself can run offline after it has been built and installed.
 
@@ -39,7 +39,7 @@ node --version
 npm --version
 ```
 
-If both commands print version numbers, continue to the next section.
+If `node --version` reports **v22.12.0 or newer** and npm prints a version number, continue to the next section.
 
 If either command says `command not found`, install a current **Node.js LTS** release using the normal software/package manager for your Linux distribution, then run the two commands again.
 
@@ -95,9 +95,11 @@ sudo ./BUILD_LINUX_APPIMAGE.sh
 The build script will:
 
 1. Check that Node.js and npm are available.
-2. Install the required packaging dependencies.
-3. Build Systemika Studio.
-4. Create the Linux AppImage.
+2. Install the pinned Electron packaging tool (`electron-builder` 26.16.1).
+3. Stage Systemika with a dependency-free Node build script.
+4. Build the Linux AppImage with Electron 44.3.0 using Electron Builder's static AppImage runtime toolset (`1.0.3`).
+
+The public 1.0.0 source no longer uses Gulp or the older electron-builder 26.0.x toolchain that produced the earlier `tar@6.2.1`, Git `node-gyp`, and high/critical audit warnings. npm can still display upstream deprecation notices from electron-builder's own build-only transitive packages. Those packages are not Systemika runtime application dependencies. The AppImage is also built with the modern static runtime, so students should not need the legacy `libfuse.so.2`/FUSE2 package merely to launch Systemika. Do not run `npm audit fix --force` on the release source. See `BUILD_TOOLCHAIN_SECURITY.md` for details.
 
 When the build succeeds, the script prints the location of the generated `.AppImage` file. It is normally located in:
 
@@ -262,7 +264,7 @@ Search for **Systemika Studio** in the Applications menu. The Applications-menu 
 
 ### The AppImage reports a FUSE-related error
 
-Some Linux distributions require an AppImage/FUSE compatibility package. The exact package name depends on your distribution and version. If the error specifically mentions `FUSE`, `libfuse.so.2`, or that the AppImage cannot be mounted, install the AppImage/FUSE compatibility package recommended by your Linux distribution, then try launching Systemika Studio again.
+The Systemika Studio 1.0.0 builder uses Electron Builder's static AppImage runtime (`toolsets.appimage = 1.0.3`), so the finished AppImage should **not** require the legacy FUSE2 library (`libfuse.so.2`) merely to start. If a newly built Systemika AppImage still reports a FUSE2/libfuse2 error, first confirm that you are building from the final 1.0.0 source package and rebuild it with `./BUILD_LINUX_APPIMAGE.sh`. Do not install an obsolete FUSE2 package solely as a workaround for an AppImage produced by an older Systemika build configuration.
 
 ## 10. Quick installation summary
 

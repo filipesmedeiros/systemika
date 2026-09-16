@@ -13,5 +13,8 @@
   "devDependencies": {
     "electron": "44.3.0"
   },
-  "productName": "Systemika Studio"
+  "productName": "Systemika Studio",
+  "engines": {
+    "node": ">=22.12.0"
+  }
 }

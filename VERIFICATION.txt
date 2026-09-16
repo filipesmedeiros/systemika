@@ -1,0 +1,50 @@
+Systemika Studio 1.0.0 - Final public release verification
+Date: 2026-09-16
+
+Automated regression verification:
+- 301/301 tests passing with: npm test
+- 19 permanent validation models under validation-models/
+
+Verified output workspace:
+- The modeling canvas occupies the left pane; a dedicated resizable Output panel occupies the right pane and shows Equations by default.
+- Table, Time Plot, XY Plot, and Histogram toolbar/keyboard actions activate the corresponding output in the upper right pane, with settings using 60% of the default right-panel height; Equations uses the full output height with no lower pane.
+- Vertical and horizontal splitters resize the workspace; Detach opens a true external output window; Attach returns the live panel to the main workspace.
+- Run/output selectors use fixed scrollable heights (about 3 runs; about 5 variables).
+- Manage Runs text entry is isolated from editor single-key shortcuts; Enter/Ctrl/Cmd+1/Ctrl/Cmd+R run from the Run Name field.
+- Number Box creation UI and N shortcut are removed; legacy Number Box models remain loadable.
+
+Verified classroom interface:
+- Help menu is Systemika-specific: Getting Started, Keyboard Shortcuts, Functions & Equations, Unit Checking, Preferences, About, License, Third-party Notices.
+- Obsolete StochSD manuals/support links, Full Potential CSS material, restart items, and hidden legacy plugin-menu access are absent.
+- Histogram output is available on the toolbar with shortcut H and supports multi-run comparison with shared bins and translucent overlays.
+- Single-run Histogram uses light gray fill with black bin borders and no point markers.
+- Hide/Unhide Question Marks toolbar control and Q shortcut are present; hiding markers does not disable definition validation.
+- Preferences, About, license text, and third-party notices use current Systemika terminology/provenance.
+
+Simulation and validation:
+- Flow rates are signed and unrestricted; negative values are not clamped, and legacy OnlyPositive metadata is normalized/ignored.
+- Native Systemika engine retained.
+- Strict unit checker retained.
+- Permanent validation set retained.
+
+Desktop packaging:
+- Electron is pinned to 44.3.0 for Electron-based source and Electron-based packaging.
+- Release packaging uses electron-builder 26.16.1 as its only npm packaging dependency; Gulp/useref packaging dependencies are removed.
+- Linux AppImage packaging pins the static AppImage toolset 1.0.3 to avoid the legacy FUSE2/libfuse.so.2 runtime requirement.
+- Installer staging is handled by dependency-free distribute/build.js; electron-builder native-module rebuilding is disabled because Systemika has no native npm modules.
+- Public packaging metadata consistently uses Systemika Studio 1.0.0.
+- macOS Universal app builder is included as BUILD_MACOS_INSTALLER.command.
+
+- Paged Figures: Time/Compare/XY/Histogram page persistence and legacy compatibility covered by regression tests; page navigation/add/delete controls live on the Figure, with the last page protected from deletion.
+- Print Equations: integral/differential/difference forms, type/name/computation sorting, explicit stock Initial Condition fields, persistent model-entity comments, and TXT/CSV/LaTeX export covered by regression tests.
+- Graph export: Time/Compare/XY/Histogram property dialogs expose transparent SVG/PNG export; legend boxes have a visible gap from the plot grid and reproduce dash/width styles; XY Show Number repeats run numbers along curves according to rendered curve length; Figure page navigation is bottom-right and omitted from exports. Plot Period is automatic and no longer exposed in plot properties; XY line width is fixed to Thick.
+- Figure clipboard: Electron 44 uses clipboard.write() + ClipboardItem for PNG images; toolbar/keyboard Copy and Cut of a single Figure also place a high-resolution transparent PNG on the system clipboard for direct paste into document/presentation software.
+
+Equation/editor refinements:
+- Canonical Systemika references use bare entity names; legacy bracketed references remain accepted for older `.ssd` files.
+- Multiline nested equations require no continuation/escape character.
+- Double-click focuses Name first; Tab moves through property fields rather than inserting a tab character.
+- Time/Compare Plot line dash and width are stored per plotted entity and per Figure page, with a uniform solid/2px default.
+
+Run management refinement:
+- Manage Runs includes Delete All with confirmation; deleting runs removes them from display selections and refreshes output devices.

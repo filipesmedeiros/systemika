@@ -36,9 +36,10 @@ test('canonical Systemika model terminology is declared explicitly', () => {
 });
 
 test('user-facing editor terminology uses Auxiliary Constant and Lookup rather than Variable Converter or Parameter', () => {
-  assert.match(editor, /title:\s*"Auxiliaries"/);
-  assert.match(editor, /title:\s*"Constants"/);
-  assert.match(editor, /title:\s*"Lookups"/);
+  const documentation = fs.readFileSync(path.join(src, 'systemika-documentation.js'), 'utf8');
+  assert.match(documentation, /auxiliary:\s*"Auxiliary"/);
+  assert.match(documentation, /constant:\s*"Constant"/);
+  assert.match(documentation, /lookup:\s*"Lookup"/);
   assert.match(editor, /"Lookup Help"/);
   assert.match(preferences, /Show Lookup plot preview/);
   assert.doesNotMatch(editor, /Converter Help/);

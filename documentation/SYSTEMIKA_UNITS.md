@@ -133,11 +133,11 @@ The true and false result branches must have compatible units. The condition mus
 
 ### Statistical functions
 
-- `RandomUniform(min, max, [seed])`: min and max must have compatible units; output has that unit.
-- `RandomNormal(mean, standard deviation, [seed])`: mean and standard deviation must have compatible units; output has that unit.
-- `RandomTriangular(min, max, mode, [seed])`: min, max, and mode must have compatible units; output has that unit.
-- `RandomGamma(shape, scale, [seed])`: shape is Unitless; output has the scale unit.
-- `RandomBeta(alpha, beta, [seed])`: alpha and beta are Unitless; output is Unitless.
+- `RandomUniform(min, max, seed?)`: min and max must have compatible units; output has that unit.
+- `RandomNormal(mean, standard deviation, seed?)`: mean and standard deviation must have compatible units; output has that unit.
+- `RandomTriangular(min, max, mode, seed?)`: min, max, and mode must have compatible units; output has that unit.
+- `RandomGamma(shape, scale, seed?)`: shape is Unitless; output has the scale unit.
+- `RandomBeta(alpha, beta, seed?)`: alpha and beta are Unitless; output is Unitless.
 - all explicit seeds are Unitless.
 
 ## Lookups

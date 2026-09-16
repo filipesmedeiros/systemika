@@ -27,6 +27,16 @@ test('Euler solves a constant inflow exactly at sample points', () => {
   assert.deepEqual(results.value('s'), [0, 10, 20, 30, 40, 50]);
 });
 
+test('flows are signed and never clamped to zero, including legacy nonNegative specifications', () => {
+  const results = engine.simulate({
+    timeStart: 0, timeLength: 2, dt: 1, method: 'Euler',
+    stocks: [{ id: 's', name: 'Stock', initial: '10' }],
+    flows: [{ id: 'f', name: 'Signed Flow', equation: '-2', targetId: 's', nonNegative: true }]
+  });
+  assert.deepEqual(results.value('f'), [-2, -2, -2]);
+  assert.deepEqual(results.value('s'), [10, 8, 6]);
+});
+
 test('RK4 accurately integrates exponential growth', () => {
   const results = engine.simulate({
     timeStart: 0, timeLength: 10, dt: 0.25, method: 'RK4',
@@ -247,7 +257,7 @@ test('browser adapter compiles the existing Systemika primitive/setting shape', 
     };
   }
   const stock = cell(1, 'Stock', 'Population', { InitialValue: '10', NonNegative: 'false' });
-  const rate = cell(2, 'Variable', 'Rate', { Equation: '2' });
+  const rate = cell(2, 'Variable', 'Rate', { Equation: '-2' });
   const flow = cell(3, 'Flow', 'Growth', { FlowRate: '[Rate]', OnlyPositive: 'true' });
   flow.target = stock;
 
@@ -262,7 +272,8 @@ test('browser adapter compiles the existing Systemika primitive/setting shape', 
   try {
     const compiled = engine.compileCurrentModel();
     const results = engine.simulate(compiled);
-    assert.deepEqual(results.value(stock), [10, 12, 14]);
+    assert.deepEqual(results.value(flow), [-2, -2, -2]);
+    assert.deepEqual(results.value(stock), [10, 8, 6]);
   } finally {
     Object.assign(global, old);
   }
@@ -308,24 +319,24 @@ test('native equation editor keeps clean function names while showing optional s
   const categories = await fs.readFile(path.join(__dirname, '..', 'OpenSystemDynamics', 'src', 'functionCategories.js'), 'utf8');
   const editor = await fs.readFile(path.join(__dirname, '..', 'OpenSystemDynamics', 'src', 'editor.js'), 'utf8');
 
-  assert.ok(categories.includes('Conditional Function'), '0.8.3 category move should be reverted');
-  assert.match(categories, /name: "Conditional Function"[\s\S]*name: "IfThenElse"/);
+  assert.ok(!categories.includes('Conditional Function'), 'Conditional Function category should be removed');
+  assert.match(categories, /name: "Programming Functions"[\s\S]*name: "IfThenElse"/);
 
   for (const signature of [
-    'RandomUniform(Minimum, Maximum, [Seed])',
-    'RandomNormal(Mean, Standard Deviation, [Seed])',
-    'RandomTriangular(Minimum, Maximum, Mode, [Seed])',
-    'RandomGamma(Shape, Scale, [Seed])',
-    'RandomBeta(Alpha, Beta, [Seed])'
+    'RandomUniform(Minimum, Maximum, Seed?)',
+    'RandomNormal(Mean, Standard Deviation, Seed?)',
+    'RandomTriangular(Minimum, Maximum, Mode, Seed?)',
+    'RandomGamma(Shape, Scale, Seed?)',
+    'RandomBeta(Alpha, Beta, Seed?)'
   ]) {
     assert.ok(categories.includes(`syntax: "${signature}"`), `${signature} should be stored as hover-help syntax`);
   }
   for (const template of [
-    'RandomUniform(##Minimum$$, ##Maximum$$, [##Seed$$])',
-    'RandomNormal(##Mean$$, ##Standard Deviation$$, [##Seed$$])',
-    'RandomTriangular(##Minimum$$, ##Maximum$$, ##Mode$$, [##Seed$$])',
-    'RandomGamma(##Shape$$, ##Scale$$, [##Seed$$])',
-    'RandomBeta(##Alpha$$, ##Beta$$, [##Seed$$])'
+    'RandomUniform(##Minimum$$, ##Maximum$$)',
+    'RandomNormal(##Mean$$, ##Standard Deviation$$)',
+    'RandomTriangular(##Minimum$$, ##Maximum$$, ##Mode$$)',
+    'RandomGamma(##Shape$$, ##Scale$$)',
+    'RandomBeta(##Alpha$$, ##Beta$$)'
   ]) {
     assert.ok(categories.includes(`replacement: "${template}"`), `${template} should be the click-to-insert template`);
   }

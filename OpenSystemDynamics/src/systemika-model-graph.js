@@ -168,6 +168,29 @@ function systemikaNormalizeLoadedModel() {
         }
     }
 
+    // Insight Maker / older Systemika files may carry OnlyPositive="true"
+    // on Flows. Systemika deliberately permits signed flow rates, so normalize
+    // that legacy storage flag away. A negative rate reverses the effective
+    // direction of transfer; it is never clipped to zero.
+    for (const flow of primitives("Flow")) {
+        if (flow && flow.value) flow.value.setAttribute("OnlyPositive", "false");
+    }
+
+    // Canonical Systemika equations use bare identifier references. Convert
+    // legacy [Name] references on load when the name is a valid Systemika
+    // identifier; the native parser still accepts bracketed syntax for files
+    // that cannot be normalized safely.
+    const normalizeEquation = value => String(value == null ? "" : value)
+        .replace(/\[([A-Za-z_][A-Za-z0-9_]*)\]/g, "$1");
+    for (const item of primitives()) {
+        if (!item || !item.value) continue;
+        const type = item.value.nodeName;
+        const attr = type === "Stock" ? "InitialValue" : type === "Flow" ? "FlowRate" : type === "Variable" ? "Equation" : null;
+        if (!attr) continue;
+        const current = item.getAttribute(attr);
+        if (current != null) item.value.setAttribute(attr, normalizeEquation(current));
+    }
+
     // Early Lookup storage used parallel Inputs/Outputs attributes. Convert it
     // to the semicolon-delimited Data representation used by Systemika.
     for (const lookup of primitives("Converter")) {

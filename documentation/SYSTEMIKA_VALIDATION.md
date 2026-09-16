@@ -1,6 +1,6 @@
 # Systemika Studio 1.0.0 Validation Baseline
 
-Date: 2026-09-13
+Date: 2026-09-16
 
 ## Purpose
 
@@ -9,11 +9,11 @@ Systemika Studio 1.0.0 retains the permanent regression baseline established dur
 
 ## Current release result
 
-Systemika Studio 1.0.0 has **17 permanent validation models** and **233/233 passing automated regression tests**. The milestone notes below are retained as a development history of how that baseline grew.
+Systemika Studio 1.0.0 has **19 permanent validation models** and **301/301 passing automated regression tests**. The milestone notes below are retained as a development history of how that baseline grew.
 
 ## Permanent validation models
 
-The `validation-models/` directory contains 17 ordinary `.ssd` files:
+The `validation-models/` directory contains 19 ordinary `.ssd` files:
 
 1. Constant Inflow
 2. Constant Outflow
@@ -32,6 +32,8 @@ The `validation-models/` directory contains 17 ordinary `.ssd` files:
 15. Link Polarity Annotation
 16. Smooth, Delay, and fixed-time Lag
 17. Statistical Functions
+18. Signed Negative Flow
+19. Bare Multiline Equation
 
 `validation-models/manifest.js` stores the corresponding numerical specifications and expected values used by the automated tests.
 
@@ -49,7 +51,7 @@ Automated tests verify that:
 
 ## Numerical robustness checks
 
-Automated tests verify analytical or known results for the permanent models, including conservation in a two-stock transfer. The engine also provides explicit errors for division/modulo by zero and rejects settings requiring more than 2,000,000 integration steps.
+Automated tests verify analytical or known results for the permanent models, including conservation in ordinary and negative-rate two-stock transfers. Signed Flow rates are explicitly tested: negative values remain negative, reverse the effective transfer direction, and are not clipped by legacy `OnlyPositive` metadata. The engine also provides explicit errors for division/modulo by zero and rejects settings requiring more than 2,000,000 integration steps.
 
 ## Automated result
 
@@ -81,4 +83,16 @@ Milestone 0.9.9 adds a visual-regression source check for the single-run Histogr
 
 ## 1.0.0 final-release regression coverage
 
-The final pre-release pass adds regression coverage for the **Hide/Unhide Question Marks (Q)** display toggle. Tests verify both the toolbar/shortcut wiring and the display-only behavior: missing-definition markers may be hidden, while definition checking and simulation safeguards remain active. The complete first-public-release suite is **233/233 passing**.
+The final pre-release pass adds regression coverage for the **Hide/Unhide Question Marks (Q)** display toggle. Tests verify both the toolbar/shortcut wiring and the display-only behavior: missing-definition markers may be hidden, while definition checking and simulation safeguards remain active. A final Flow-semantics correction removes the inherited positive-only Flow clamp, normalizes legacy `OnlyPositive="true"` files to unrestricted flows, and adds a permanent negative-flow fixture. The complete first-public-release suite reached **259/259 passing** before the final documentation/graph-export refinement pass.
+
+
+## Paged Figures and Model Documentation
+
+The first-public-release regression suite now also covers paged plot persistence, legacy one-page migration, independent page configurations, duplicate/delete behavior, cross-page removal of deleted model entities, per-entity plot line styles, and the requested documentation equation forms. Documentation tests verify variable-type/name/computation sorting, TXT/CSV/LaTeX serialization, the explicit stock Initial Condition field, and persistent per-entity comments. Equation-editor tests cover bare-name references, legacy bracket compatibility, Name-first focus, Tab navigation, safe multiline storage, and nested multiline `IfThenElse` expressions. The pre-dock suite reached **289/289 passing** with **19 permanent validation models**. The dedicated Output-workspace and keyboard-isolation pass was subsequently refined with Equations-toolbar navigation, compact equation metadata/count placement, Print-menu removal, Escape-to-close dialogs, a 25%-width dock, fixed Table-variable visibility, and true external-window detach/Attach behavior. The previous baseline was **299/299 passing**. The additional checks cover Equations-panel naming and export behavior, Comment persistence/export, transparent SVG/PNG graph export wiring, 3× PNG rasterization with padded legend bounds, system-clipboard figure copying, dash-aware legend samples, visible legend spacing, adaptive repeated XY Show Number labels, bottom-right plot page navigation with matching +/− controls and dedicated Settings access, dynamic processing/hourglass symbols for Auxiliaries using Smooth/Delay/Lag, and clean/dirty-state handling so harmless clicks after opening a model do not trigger Unsaved Changes. The current baseline additionally verifies fixed count-based Histogram scaling, per-model-entity Table decimal settings, user-controlled run display ordering, Run Name capitalization, and dedicated plot/table Settings controls, plus the split Output workspace, true detachable external-window mode, compact scrollable run/variable selectors, Number Box creation-tool removal, Equations (E) navigation, Print-menu removal, Escape-to-close dialogs, and text-field keyboard isolation.
+
+
+### Bare/multiline equation fixture
+
+`19-bare-multiline-equation.ssd` permanently verifies the canonical bare-name equation syntax and that physical line breaks inside nested functions are treated as ordinary whitespace without any continuation character.
+
+The latest output-workspace refinement restores the original Auxiliary toolbar icon, uses a separate Equations icon, fully resets plot/table split sizing when Equations are shown, defaults plot/table layouts to a 40% output / 60% settings split, and makes Table variable selection update the displayed Table immediately. The current baseline is **301/301 passing** with **19/19 permanent validation models**.

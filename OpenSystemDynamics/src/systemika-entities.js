@@ -113,7 +113,8 @@ primitiveBank.flow = createValuedTemplate("Flow", {
 	ValveIndex: 0,
 	VariableSide: false,
 	FlowRate: "",
-	OnlyPositive: true,
+	// Legacy .ssd compatibility attribute. Systemika flows are never clamped.
+	OnlyPositive: false,
 	TimeIndependent: false,
 	Color: "black"
 });
@@ -194,18 +195,23 @@ primitiveBank.table = addValueAttributes(createTemplate("Table", {
 	RoundToZero: false,
 	RoundToZeroAtValue: 1e-12,
 	NumberLength: JSON.stringify({ usePrecision: true, precision: 4, decimal: 2 }),
+	TableDecimals: JSON.stringify({}),
 	Color: "black"
 }));
 
+// Legacy type-based line settings are retained only for old .ssd files. New
+// Systemika plots use per-entity LineStyles, with one uniform default style.
 const plotLineOptions = JSON.stringify({
 	stock: { pattern: [1], width: 2 },
-	flow: { pattern: [10, 5], width: 2 },
-	variable: { pattern: [1], width: 1 },
-	constant: { pattern: [1], width: 1 },
-	converter: { pattern: [1], width: 1 }
+	flow: { pattern: [1], width: 2 },
+	variable: { pattern: [1], width: 2 },
+	constant: { pattern: [1], width: 2 },
+	converter: { pattern: [1], width: 2 }
 });
 
 primitiveBank.timeplot = addValueAttributes(createTemplate("TimePlot", {
+	PlotPages: "",
+	PlotPageIndex: 0,
 	Primitives: "",
 	Sides: "",
 	AxisLimits: JSON.stringify({
@@ -216,6 +222,7 @@ primitiveBank.timeplot = addValueAttributes(createTemplate("TimePlot", {
 	PlotPer: 1,
 	AutoPlotPer: true,
 	LineOptions: plotLineOptions,
+	LineStyles: "{}",
 	TitleLabel: "",
 	LeftAxisLabel: "",
 	RightAxisLabel: "",
@@ -226,6 +233,8 @@ primitiveBank.timeplot = addValueAttributes(createTemplate("TimePlot", {
 }));
 
 primitiveBank.compareplot = addValueAttributes(createTemplate("ComparePlot", {
+	PlotPages: "",
+	PlotPageIndex: 0,
 	Primitives: "",
 	RunNames: JSON.stringify([""]),
 	AxisLimits: JSON.stringify({
@@ -235,6 +244,7 @@ primitiveBank.compareplot = addValueAttributes(createTemplate("ComparePlot", {
 	PlotPer: 1,
 	AutoPlotPer: true,
 	LineOptions: plotLineOptions,
+	LineStyles: "{}",
 	TitleLabel: "",
 	LeftAxisLabel: "",
 	HasNumberedLines: true,
@@ -244,6 +254,8 @@ primitiveBank.compareplot = addValueAttributes(createTemplate("ComparePlot", {
 }));
 
 primitiveBank.xyplot = addValueAttributes(createTemplate("XyPlot", {
+	PlotPages: "",
+	PlotPageIndex: 0,
 	Primitives: "",
 	RunNames: JSON.stringify([""]),
 	AxisLimits: JSON.stringify({
@@ -253,7 +265,9 @@ primitiveBank.xyplot = addValueAttributes(createTemplate("XyPlot", {
 	PlotPer: 1,
 	AutoPlotPer: true,
 	ShowLine: true,
+	// ShowMarker is retained only for legacy .ssd compatibility. New Systemika XY plots use numbered curves instead.
 	ShowMarker: false,
+	ShowNumber: false,
 	MarkStart: false,
 	MarkEnd: false,
 	LineWidth: 2,
@@ -265,6 +279,8 @@ primitiveBank.xyplot = addValueAttributes(createTemplate("XyPlot", {
 }));
 
 primitiveBank.histoplot = addValueAttributes(createTemplate("HistoPlot", {
+	PlotPages: "",
+	PlotPageIndex: 0,
 	Primitives: "",
 	RunNames: JSON.stringify([""]),
 	NumberOfBars: 10,

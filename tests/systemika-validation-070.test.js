@@ -12,8 +12,8 @@ const models = require(path.join(root, 'validation-models', 'manifest.js'));
 
 function last(values) { return values[values.length - 1]; }
 
-test('permanent validation model set contains 17 openable .ssd fixtures', () => {
-  assert.equal(models.length, 17);
+test('permanent validation model set contains 19 openable .ssd fixtures', () => {
+  assert.equal(models.length, 19);
   for (const model of models) {
     const file = path.join(root, 'validation-models', model.file);
     assert.equal(fs.existsSync(file), true, `${model.file} should exist`);
@@ -202,6 +202,26 @@ test('model normalization repairs a missing Setting node with current Systemika 
   assert.equal(setting.getAttribute('SolutionAlgorithm'),'RK1');
 });
 
+test('model normalization removes legacy positive-only flow restriction', () => {
+  const graphCode=fs.readFileSync(path.join(src,'systemika-model-graph.js'),'utf8');
+  const doc=new FakeDocument();
+  const flowEl=doc.createElement('Flow'); flowEl.setAttribute('id','7'); flowEl.setAttribute('name','Flow'); flowEl.setAttribute('OnlyPositive','true');
+  const settingEl=doc.createElement('Setting'); settingEl.setAttribute('id','9'); settingEl.setAttribute('Version','36');
+  const rootNode={children:[]};
+  const ctx={console}; vm.createContext(ctx); vm.runInContext(graphCode,ctx);
+  const SystemikaNode=vm.runInContext('SystemikaNode',ctx);
+  const flow=new SystemikaNode(flowEl,rootNode); flow.id='7';
+  const setting=new SystemikaNode(settingEl,rootNode); setting.id='9';
+  rootNode.children.push(flow,setting);
+  const settingTemplate=doc.createElement('Setting'); settingTemplate.setAttribute('Version','36');
+  ctx.primitiveBank={setting:settingTemplate};
+  ctx.primitives=(type)=>rootNode.children.filter(item=>!type || (item.value && item.value.nodeName===type));
+  ctx.getSetting=()=>setting;
+  ctx.changeNodeName=(node,name)=>node;
+  ctx.systemikaNormalizeLoadedModel();
+  assert.equal(flow.getAttribute('OnlyPositive'),'false');
+});
+
 test('save writer preserves all seven canonical model entities and their critical attributes', () => {
   const code=fs.readFileSync(path.join(src,'makexml.js'),'utf8');
   const doc=new FakeDocument();
@@ -210,7 +230,7 @@ test('save writer preserves all seven canonical model entities and their critica
   const constant=makePrimitive(doc,'Variable','4','Capacity',{Equation:'1000',isConstant:'true'});
   const lookup=makePrimitive(doc,'Converter','5','Response',{Data:'0,0;1,10',Source:'3',Interpolation:'Linear'});
   const ghost=makePrimitive(doc,'Ghost','6','Population Ghost',{Source:'2'});
-  const flow=makePrimitive(doc,'Flow','7','Births',{FlowRate:'[Population] * [Birth Rate]',OnlyPositive:'true'}); flow.source=null; flow.target=stock;
+  const flow=makePrimitive(doc,'Flow','7','Births',{FlowRate:'[Population] * [Birth Rate]',OnlyPositive:'false'}); flow.source=null; flow.target=stock;
   const link=makePrimitive(doc,'Link','8','Link',{Polarity:'+'}); link.source=aux; link.target=lookup;
   const setting=makePrimitive(doc,'Setting','9','Setting',{TimeStart:'0',TimeLength:'20',TimeStep:'0.25',SolutionAlgorithm:'RK4'});
   const list=[stock,aux,constant,lookup,ghost,flow,link,setting];
@@ -232,7 +252,7 @@ test('save writer preserves all seven canonical model entities and their critica
   assert.match(xml, /<Variable\b[^>]*name="Capacity"[^>]*Equation="1000"[^>]*isConstant="true"/);
   assert.match(xml, /<Converter\b[^>]*name="Response"[^>]*Data="0,0;1,10"[^>]*Source="3"[^>]*Interpolation="Linear"/);
   assert.match(xml, /<Ghost\b[^>]*Source="2"/);
-  assert.match(xml, /<Flow\b[^>]*FlowRate="\[Population\] \* \[Birth Rate\]"[^>]*OnlyPositive="true"/);
+  assert.match(xml, /<Flow\b[^>]*FlowRate="\[Population\] \* \[Birth Rate\]"[^>]*OnlyPositive="false"/);
   assert.match(xml, /<mxCell\b[^>]*target="2"[^>]*edge="1"|<mxCell\b[^>]*edge="1"[^>]*target="2"/);
   assert.match(xml, /<Link\b[^>]*Polarity="\+"/);
   assert.match(xml, /<mxCell\b[^>]*source="3"[^>]*target="5"|<mxCell\b[^>]*target="5"[^>]*source="3"/);

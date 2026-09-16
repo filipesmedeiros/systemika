@@ -1,6 +1,6 @@
 # Systemika Studio 1.0.0 Source Independence Audit
 
-Date: 2026-09-13
+Date: 2026-09-15
 
 ## Scope
 
@@ -31,6 +31,8 @@ The directory `OpenSystemDynamics/src/insightmaker/` no longer exists.
 - `systemika-model-utils.js`
 - `systemika-model-api.js`
 - `systemika-model-graph.js`
+- `systemika-plot-pages.js`
+- `systemika-documentation.js`
 
 ### License-header scan
 
@@ -61,4 +63,12 @@ Automated tests cover:
 - old `Parameter` normalization;
 - old Lookup table normalization;
 - absence of the inherited source directory and startup references;
+- paged Figure persistence and backward-compatible one-page migration;
+- documentation equation forms, sorting, and TXT/CSV serialization;
 - the existing numerical, editor, Link, Lookup, Undo/Redo, run-management, and platform regressions.
+## Release build-toolchain cleanup
+
+The public 1.0.0 packaging path was also audited for obsolete build dependencies. The active `distribute/` project now uses a dependency-free Node staging script and one pinned npm packaging dependency (`electron-builder` 26.16.1). The former root packaging Gulp/useref stack and the inherited `OpenSystemDynamics/distribute/` Gulp 3 helper are absent. Electron is pinned to 44.3.0 in the builder configuration, and native npm rebuilding is disabled because the packaged application has no native npm modules.
+
+See `BUILD_TOOLCHAIN_SECURITY.md` for the build-only dependency boundary and maintenance guidance.
+
